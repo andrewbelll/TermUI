@@ -147,7 +147,7 @@ termui::Text t3("label", termui::Style::bold());    // styled
 | Method | Description |
 |---|---|
 | `Text& add(const std::string& content, const Style& s = Style())` | Appends a span with the given style. Returns `*this` for chaining. |
-| `std::string render() const` | Returns the text as an ANSI escape sequence string ready to write to a terminal. |
+| `std::string render(int max_width = 0) const` | Returns the text as an ANSI escape sequence string. If `max_width > 0`, content is truncated to at most `max_width` display columns. |
 | `size_t length() const` | Returns the total display-column width (counts Unicode codepoints, not bytes). |
 
 **Example — multi-style line:**

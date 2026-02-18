@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <csignal>
+#include <cassert>
 
 #ifdef _WIN32
 #  ifndef NOMINMAX
@@ -78,6 +79,25 @@ struct Style {
     static std::string reset() { return "\033[0m"; }
 };
 
+// ─── Internal UTF-8 Helper ──────────────────────────────────────────────────
+namespace detail {
+// Returns the byte length of the UTF-8 sequence starting at s[i].
+// Returns 0 for continuation bytes, invalid lead bytes, or if i >= s.size().
+// Callers should skip invalid positions (i.e. call ++i; continue on return 0).
+inline size_t utf8_char_len(const std::string& s, size_t i) {
+    const size_t len = s.size();
+    if (i >= len) return 0;
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    size_t n = (c < 0x80)           ? 1
+             : ((c & 0xE0) == 0xC0) ? 2
+             : ((c & 0xF0) == 0xE0) ? 3
+             : ((c & 0xF8) == 0xF0) ? 4
+             : 0; // continuation or invalid lead byte
+    if (n == 0 || i + n > len) return 0;
+    return n;
+}
+} // namespace detail
+
 // ─── UTF-8 Helpers ──────────────────────────────────────────────────────────
 
 // Returns the display width (column count) of a UTF-8 string.
@@ -87,14 +107,8 @@ inline size_t utf8_display_width(const std::string& s) {
     size_t i = 0;
     const size_t len = s.size();
     while (i < len) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t char_len = 1;
-        if      (c >= 0x80) {
-            if      ((c & 0xE0) == 0xC0) char_len = 2;
-            else if ((c & 0xF0) == 0xE0) char_len = 3;
-            else                          char_len = 4;
-        }
-        if (i + char_len > len) break; // truncated sequence
+        size_t char_len = detail::utf8_char_len(s, i);
+        if (char_len == 0) { ++i; continue; } // continuation or invalid: skip
         i += char_len;
         ++width;
     }
@@ -107,14 +121,8 @@ inline std::string utf8_truncate(const std::string& s, size_t max_width) {
     size_t i = 0;
     const size_t len = s.size();
     while (i < len && width < max_width) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t char_len = 1;
-        if (c >= 0x80) {
-            if      ((c & 0xE0) == 0xC0) char_len = 2;
-            else if ((c & 0xF0) == 0xE0) char_len = 3;
-            else                          char_len = 4;
-        }
-        if (i + char_len > len) break; // truncated sequence
+        size_t char_len = detail::utf8_char_len(s, i);
+        if (char_len == 0) { ++i; continue; } // continuation or invalid: skip
         i += char_len;
         ++width;
     }
@@ -144,12 +152,27 @@ public:
     }
 
     // Renders the text to an ANSI escape sequence string.
-    std::string render() const {
+    // If max_width > 0, content is truncated to at most max_width display columns.
+    std::string render(int max_width = 0) const {
         std::string out;
         out.reserve(spans_.size() * 32);
+        int remaining = max_width;
         for (const TextSpan& span : spans_) {
+            if (max_width > 0 && remaining <= 0) break;
+            const std::string* text = &span.content;
+            std::string truncated;
+            if (max_width > 0) {
+                const int w = static_cast<int>(utf8_display_width(span.content));
+                if (w > remaining) {
+                    truncated = utf8_truncate(span.content, static_cast<size_t>(remaining));
+                    text = &truncated;
+                    remaining = 0;
+                } else {
+                    remaining -= w;
+                }
+            }
             out += span.style.begin();
-            out += span.content;
+            out += *text;
             out += "\033[0m";
         }
         return out;
@@ -223,7 +246,8 @@ public:
             if (usable > 0 && total > usable) {
                 // Round-half-up to minimise cumulative truncation error.
                 for (size_t c = 0; c < widths.size(); ++c)
-                    widths[c] = std::max(1, (widths[c] * usable + total / 2) / total);
+                    widths[c] = std::max(1, static_cast<int>(
+                        (static_cast<long long>(widths[c]) * usable + total / 2) / total));
             }
         }
 
@@ -321,18 +345,18 @@ public:
         const char* fill_char  = "\xe2\x96\x88";
         const char* empty_char = "\xe2\x96\x91";
 
-        std::string fill_str, empty_str;
-        fill_str.reserve(static_cast<size_t>(filled) * 3);
-        empty_str.reserve(static_cast<size_t>(empty)  * 3);
-        for (int i = 0; i < filled; ++i) fill_str  += fill_char;
-        for (int i = 0; i < empty;  ++i) empty_str += empty_char;
+        std::string filled_chars, empty_chars;
+        filled_chars.reserve(static_cast<size_t>(filled) * 3);
+        empty_chars.reserve(static_cast<size_t>(empty)  * 3);
+        for (int i = 0; i < filled; ++i) filled_chars += fill_char;
+        for (int i = 0; i < empty;  ++i) empty_chars  += empty_char;
 
         const int pct = static_cast<int>(value_ * 100.0 + 0.5);
 
         Text t;
         t.add("[", Style(Color::BrightBlack));
-        if (!fill_str.empty())  t.add(fill_str,  Style(fill_));
-        if (!empty_str.empty()) t.add(empty_str, Style(empty_));
+        if (!filled_chars.empty()) t.add(filled_chars, Style(fill_));
+        if (!empty_chars.empty())  t.add(empty_chars,  Style(empty_));
         t.add("] ", Style(Color::BrightBlack));
         t.add(std::to_string(pct) + "%", Style::bold());
         return t;
@@ -390,6 +414,7 @@ inline void enter_raw_mode() {
 }
 
 inline void exit_raw_mode() {
+    if (hStdout_ref() == INVALID_HANDLE_VALUE) return;
     SetConsoleMode(hStdout_ref(), orig_out_mode_ref());
     SetConsoleMode(hStdin_ref(),  orig_in_mode_ref());
     SetConsoleOutputCP(orig_cp_ref());
@@ -416,17 +441,17 @@ inline Key read_key() {
         if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT) return KEY_RESIZE;
         if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
-        char ch = ir.Event.KeyEvent.uChar.AsciiChar;
-        if (vk == VK_RETURN) return KEY_ENTER;
-        if (ch == 'q' || ch == 'Q') return KEY_QUIT;
-        if (ch == 3) return KEY_CTRL_C;
+        WCHAR wch = ir.Event.KeyEvent.uChar.UnicodeChar;
+        if (vk == VK_RETURN)             return KEY_ENTER;
+        if (wch == L'q' || wch == L'Q') return KEY_QUIT;
+        if (wch == 3)                   return KEY_CTRL_C;
         switch (vk) {
             case VK_LEFT:  return KEY_LEFT;
             case VK_RIGHT: return KEY_RIGHT;
             case VK_UP:    return KEY_UP;
             case VK_DOWN:  return KEY_DOWN;
         }
-        if (ch != 0) return KEY_OTHER;
+        if (wch != 0) return KEY_OTHER;
     }
 }
 
@@ -456,7 +481,8 @@ inline void exit_raw_mode() {
 }
 
 inline void enter_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios_ref());
+    if (tcgetattr(STDIN_FILENO, &orig_termios_ref()) != 0)
+        return; // not a terminal; raw mode unavailable
     struct termios raw = orig_termios_ref();
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     raw.c_oflag &= ~(OPOST);
@@ -488,9 +514,9 @@ inline Key read_key() {
     ssize_t n = read(STDIN_FILENO, &c, 1);
     if (n <= 0) return KEY_NONE;
 
-    if (c == 13)                   return KEY_ENTER;
+    if (c == '\r')                 return KEY_ENTER;   // CR
     if (c == 'q' || c == 'Q')     return KEY_QUIT;
-    if (c == 3)                    return KEY_CTRL_C;
+    if (c == '\x03')               return KEY_CTRL_C;  // ETX / Ctrl+C
 
     if (c == 27) { // ESC sequence
         unsigned char seq[2];
@@ -508,8 +534,11 @@ inline Key read_key() {
             // terminates the sequence so stale bytes don't pollute the next
             // read_key() call.
             if (seq[1] >= '0' && seq[1] <= '9') {
+                // Drain until a letter terminates the sequence; cap at 32 bytes
+                // to prevent an indefinite loop on malformed or adversarial input.
+                int limit = 32;
                 unsigned char drain;
-                while (read(STDIN_FILENO, &drain, 1) > 0) {
+                while (limit-- > 0 && read(STDIN_FILENO, &drain, 1) > 0) {
                     if ((drain >= 'A' && drain <= 'Z') ||
                         (drain >= 'a' && drain <= 'z')) break;
                 }
@@ -648,6 +677,7 @@ public:
         return *this;
     }
 
+    // Removes all static lines and resets the scroll position to 0.
     void clear() { lines_.clear(); scroll_ = 0; }
 
     void set_list(const SelectableList& list) {
@@ -705,7 +735,10 @@ public:
         return pages_.back();
     }
 
-    Page& page(size_t index) { return pages_[index]; }
+    Page& page(size_t index) {
+        assert(index < pages_.size() && "App::page index out of range");
+        return pages_[index];
+    }
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
 
@@ -733,7 +766,10 @@ public:
     }
 
 private:
-    std::string title_;
+    std::string title_;   // reserved; currently unused in rendering
+    // deque: push_back does not invalidate existing element references,
+    // so the Page& returned by add_page() remains valid as long as no
+    // page is erased.
     std::deque<Page> pages_;
     size_t active_tab_;
     bool running_;
@@ -743,7 +779,11 @@ private:
 #ifndef _WIN32
         struct sigaction sa;
         std::memset(&sa, 0, sizeof(sa));
+        sigemptyset(&sa.sa_mask);
 
+        // NOTE: g_resize_flag_ref() accesses a function-local static, which is
+        // technically non-conforming in POSIX signal handlers (not async-signal-safe),
+        // but resolves to a single .bss load on GCC/Clang/Linux and is safe in practice.
         sa.sa_handler = [](int) { detail::g_resize_flag_ref() = 1; };
         sigaction(SIGWINCH, &sa, NULL);
 
@@ -795,7 +835,7 @@ private:
             break;
         case detail::KEY_DOWN: {
             const detail::TermSize ts = detail::get_terminal_size();
-            const int content_rows = ts.rows - 3;
+            const int content_rows = std::max(1, ts.rows - 3);
             pages_[active_tab_].scroll_down(1, content_rows);
             render();
             break;
@@ -871,10 +911,13 @@ private:
                     ? static_lines[static_cast<size_t>(line_idx)]
                     : list_lines[static_cast<size_t>(line_idx - n_static)];
                 const size_t plain_len = line.length();
+                const int content_width = W - 3;
                 buf += ' ';
-                buf += line.render();
-                const int pad = W - 3 - static_cast<int>(plain_len);
-                if (pad > 0) buf += std::string(static_cast<size_t>(pad), ' ');
+                buf += line.render(content_width); // truncates overflowing lines
+                if (static_cast<int>(plain_len) < content_width) {
+                    const int pad = content_width - static_cast<int>(plain_len);
+                    buf += std::string(static_cast<size_t>(pad), ' ');
+                }
             } else {
                 buf += std::string(static_cast<size_t>(W - 2), ' ');
             }
