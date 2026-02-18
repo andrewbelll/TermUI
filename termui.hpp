@@ -45,7 +45,7 @@ struct Style {
         : fg(Color::Default), bg(Color::Default),
           is_bold(false), is_underline(false), is_reverse(false) {}
 
-    Style(Color fg_color)
+    explicit Style(Color fg_color)
         : fg(fg_color), bg(Color::Default),
           is_bold(false), is_underline(false), is_reverse(false) {}
 
@@ -60,10 +60,12 @@ struct Style {
     }
 
     std::string begin() const {
-        std::string seq = "\033[0";
-        if (is_bold) seq += ";1";
+        std::string seq;
+        seq.reserve(16);
+        seq = "\033[0";
+        if (is_bold)      seq += ";1";
         if (is_underline) seq += ";4";
-        if (is_reverse) seq += ";7";
+        if (is_reverse)   seq += ";7";
         if (fg != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg));
         if (bg != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg) + 10);
         seq += "m";
@@ -75,34 +77,35 @@ struct Style {
 
 // ─── UTF-8 Helpers ──────────────────────────────────────────────────────────
 
-// Returns the display width (number of columns) of a UTF-8 string.
-// Assumes all codepoints used in termui are single-width (no CJK fullwidth).
+// Returns the display width (column count) of a UTF-8 string.
+// Assumes all codepoints are single-width (no CJK fullwidth).
 inline size_t utf8_display_width(const std::string& s) {
     size_t width = 0;
     size_t i = 0;
-    while (i < s.size()) {
+    const size_t len = s.size();
+    while (i < len) {
         unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c < 0x80) { ++i; }
-        else if ((c & 0xE0) == 0xC0) { i += 2; }
-        else if ((c & 0xF0) == 0xE0) { i += 3; }
-        else { i += 4; }
+        if      (c < 0x80)            { ++i; }
+        else if ((c & 0xE0) == 0xC0)  { i += 2; }
+        else if ((c & 0xF0) == 0xE0)  { i += 3; }
+        else                           { i += 4; }
         ++width;
     }
     return width;
 }
 
 // Truncate a UTF-8 string to at most max_width display columns.
-// Returns the truncated string (no padding).
 inline std::string utf8_truncate(const std::string& s, size_t max_width) {
     size_t width = 0;
     size_t i = 0;
-    while (i < s.size() && width < max_width) {
+    const size_t len = s.size();
+    while (i < len && width < max_width) {
         unsigned char c = static_cast<unsigned char>(s[i]);
         size_t char_len = 1;
         if (c >= 0x80) {
-            if ((c & 0xE0) == 0xC0) char_len = 2;
+            if      ((c & 0xE0) == 0xC0) char_len = 2;
             else if ((c & 0xF0) == 0xE0) char_len = 3;
-            else char_len = 4;
+            else                          char_len = 4;
         }
         i += char_len;
         ++width;
@@ -117,14 +120,14 @@ struct TextSpan {
     Style style;
 
     TextSpan() {}
-    TextSpan(const std::string& text) : content(text) {}
+    explicit TextSpan(const std::string& text) : content(text) {}
     TextSpan(const std::string& text, const Style& s) : content(text), style(s) {}
 };
 
 class Text {
 public:
     Text() {}
-    Text(const std::string& content) { spans_.push_back(TextSpan(content)); }
+    explicit Text(const std::string& content) { spans_.push_back(TextSpan(content)); }
     Text(const std::string& content, const Style& s) { spans_.push_back(TextSpan(content, s)); }
 
     Text& add(const std::string& content, const Style& s = Style()) {
@@ -132,20 +135,23 @@ public:
         return *this;
     }
 
+    // Renders the text to an ANSI escape sequence string.
     std::string render() const {
         std::string out;
-        for (size_t i = 0; i < spans_.size(); ++i) {
-            out += spans_[i].style.begin();
-            out += spans_[i].content;
-            out += Style::reset();
+        out.reserve(spans_.size() * 32);
+        for (const TextSpan& span : spans_) {
+            out += span.style.begin();
+            out += span.content;
+            out += "\033[0m";
         }
         return out;
     }
 
+    // Returns the total display-column width (not byte length).
     size_t length() const {
         size_t len = 0;
-        for (size_t i = 0; i < spans_.size(); ++i)
-            len += utf8_display_width(spans_[i].content);
+        for (const TextSpan& span : spans_)
+            len += utf8_display_width(span.content);
         return len;
     }
 
@@ -159,7 +165,7 @@ class Table {
 public:
     struct Column {
         std::string name;
-        int width; // 0 = auto
+        int width; // 0 = auto-sized to content
         Column(const std::string& n, int w) : name(n), width(w) {}
     };
 
@@ -184,36 +190,35 @@ public:
         std::vector<Text> result;
         if (columns_.empty()) return result;
 
-        // Calculate column widths
+        // Determine column widths (fixed or auto-sized to content).
         std::vector<int> widths(columns_.size(), 0);
         for (size_t c = 0; c < columns_.size(); ++c) {
             if (columns_[c].width > 0) {
                 widths[c] = columns_[c].width;
             } else {
-                widths[c] = static_cast<int>(columns_[c].name.size());
+                widths[c] = static_cast<int>(utf8_display_width(columns_[c].name));
                 for (size_t r = 0; r < rows_.size(); ++r) {
                     if (c < rows_[r].size()) {
-                        int len = static_cast<int>(rows_[r][c].size());
-                        if (len > widths[c]) widths[c] = len;
+                        int cell_w = static_cast<int>(utf8_display_width(rows_[r][c]));
+                        if (cell_w > widths[c]) widths[c] = cell_w;
                     }
                 }
             }
         }
 
-        // Scale to available_width if given
+        // Scale columns proportionally when a width limit is given.
         if (available_width > 0) {
             int total = 0;
             int separators = static_cast<int>(columns_.size()) - 1;
             for (size_t c = 0; c < widths.size(); ++c) total += widths[c];
             int usable = available_width - separators * 3; // " | " between cols
             if (usable > 0 && total > usable) {
-                for (size_t c = 0; c < widths.size(); ++c) {
+                for (size_t c = 0; c < widths.size(); ++c)
                     widths[c] = std::max(1, widths[c] * usable / total);
-                }
             }
         }
 
-        // Render header
+        // Header row.
         Text header;
         for (size_t c = 0; c < columns_.size(); ++c) {
             if (c > 0) header.add(" \xe2\x94\x82 ", Style(Color::BrightBlack));
@@ -221,23 +226,24 @@ public:
         }
         result.push_back(header);
 
-        // Separator line
+        // Separator row.
         Text sep;
         for (size_t c = 0; c < columns_.size(); ++c) {
-            if (c > 0) sep.add("\xe2\x94\x80\xe2\x94\xbc\xe2\x94\x80",
-                               Style(Color::BrightBlack));
+            if (c > 0) sep.add("\xe2\x94\x80\xe2\x94\xbc\xe2\x94\x80", Style(Color::BrightBlack));
+            // Build a run of horizontal-rule characters (3 bytes each).
             std::string dash;
+            dash.reserve(static_cast<size_t>(widths[c]) * 3);
             for (int i = 0; i < widths[c]; ++i) dash += "\xe2\x94\x80";
             sep.add(dash, Style(Color::BrightBlack));
         }
         result.push_back(sep);
 
-        // Data rows
+        // Data rows.
         for (size_t r = 0; r < rows_.size(); ++r) {
             Text row;
             for (size_t c = 0; c < columns_.size(); ++c) {
                 if (c > 0) row.add(" \xe2\x94\x82 ", Style(Color::BrightBlack));
-                std::string cell = (c < rows_[r].size()) ? rows_[r][c] : "";
+                const std::string& cell = (c < rows_[r].size()) ? rows_[r][c] : empty_str();
                 row.add(pad_or_truncate(cell, widths[c]));
             }
             result.push_back(row);
@@ -251,18 +257,23 @@ private:
     std::vector<std::vector<std::string>> rows_;
     Style header_style_;
 
+    // Returns a ref to an empty string; avoids constructing temporaries in render().
+    static const std::string& empty_str() {
+        static const std::string s;
+        return s;
+    }
+
     static std::string pad_or_truncate(const std::string& s, int width) {
         if (width <= 0) return "";
         int len = static_cast<int>(utf8_display_width(s));
-        if (len <= width) {
-            return s + std::string(width - len, ' ');
-        }
+        if (len <= width)
+            return s + std::string(static_cast<size_t>(width - len), ' ');
         if (width <= 1) return "\xe2\x80\xa6"; // …
-        return utf8_truncate(s, width - 1) + "\xe2\x80\xa6";
+        return utf8_truncate(s, static_cast<size_t>(width - 1)) + "\xe2\x80\xa6";
     }
 };
 
-// Page and SelectableList are defined after the detail namespace (SelectableList needs detail::Key)
+// Page and SelectableList are defined after the detail namespace.
 
 // ─── Platform Detail ────────────────────────────────────────────────────────
 
@@ -270,7 +281,7 @@ namespace detail {
 
 enum Key {
     KEY_NONE = 0,
-    KEY_QUIT,       // 'q'
+    KEY_QUIT,
     KEY_CTRL_C,
     KEY_LEFT,
     KEY_RIGHT,
@@ -337,7 +348,7 @@ inline Key read_key() {
         char ch = ir.Event.KeyEvent.uChar.AsciiChar;
         if (vk == VK_RETURN) return KEY_ENTER;
         if (ch == 'q' || ch == 'Q') return KEY_QUIT;
-        if (ch == 3) return KEY_CTRL_C; // Ctrl+C
+        if (ch == 3) return KEY_CTRL_C;
         switch (vk) {
             case VK_LEFT:  return KEY_LEFT;
             case VK_RIGHT: return KEY_RIGHT;
@@ -367,8 +378,8 @@ inline void enter_raw_mode() {
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1; // 100ms timeout
+    raw.c_cc[VMIN]  = 0;
+    raw.c_cc[VTIME] = 1; // 100 ms read timeout
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
     raw_mode_active = true;
 }
@@ -392,12 +403,12 @@ inline Key read_key() {
     }
 
     unsigned char c;
-    int n = read(STDIN_FILENO, &c, 1);
+    ssize_t n = read(STDIN_FILENO, &c, 1);
     if (n <= 0) return KEY_NONE;
 
-    if (c == 13) return KEY_ENTER;  // Enter / CR
-    if (c == 'q' || c == 'Q') return KEY_QUIT;
-    if (c == 3) return KEY_CTRL_C; // Ctrl+C
+    if (c == 13)                   return KEY_ENTER;
+    if (c == 'q' || c == 'Q')     return KEY_QUIT;
+    if (c == 3)                    return KEY_CTRL_C;
 
     if (c == 27) { // ESC sequence
         unsigned char seq[2];
@@ -458,8 +469,10 @@ public:
     SelectableList& cursor_style(const Style& s) { cursor_style_ = s; return *this; }
 
     int cursor() const { return cursor_; }
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
 
-    const std::string& selected_item() const { return items_[cursor_]; }
+    const std::string& selected_item() const { return items_[static_cast<size_t>(cursor_)]; }
 
     bool handle_key(detail::Key key) {
         if (items_.empty()) return false;
@@ -471,7 +484,7 @@ public:
             if (cursor_ + 1 < static_cast<int>(items_.size())) { ++cursor_; return true; }
             return false;
         case detail::KEY_ENTER:
-            if (on_select_) on_select_(cursor_, items_[cursor_]);
+            if (on_select_) on_select_(cursor_, items_[static_cast<size_t>(cursor_)]);
             return true;
         default:
             return false;
@@ -479,22 +492,23 @@ public:
     }
 
     std::vector<Text> render(int width) const {
-        std::vector<Text> result;
+        std::vector<Text> lines;
+        lines.reserve(items_.size());
         for (size_t i = 0; i < items_.size(); ++i) {
-            bool is_cur = (static_cast<int>(i) == cursor_);
-            std::string prefix = is_cur ? "> " : "  ";
-            const Style& st = is_cur ? cursor_style_ : normal_style_;
+            const bool is_cursor = (static_cast<int>(i) == cursor_);
+            const Style& st = is_cursor ? cursor_style_ : normal_style_;
 
-            std::string content = prefix + items_[i];
-            if (width > 0 && static_cast<int>(content.size()) > width)
-                content = content.substr(0, width);
+            std::string content = is_cursor ? "> " : "  ";
+            content += items_[i];
 
-            result.push_back(Text(content, st));
+            // Truncate by display width, not raw byte length.
+            if (width > 0 && utf8_display_width(content) > static_cast<size_t>(width))
+                content = utf8_truncate(content, static_cast<size_t>(width));
+
+            lines.push_back(Text(content, st));
         }
-        return result;
+        return lines;
     }
-
-    bool empty() const { return items_.empty(); }
 
 private:
     std::vector<std::string> items_;
@@ -539,20 +553,18 @@ public:
     }
 
     void scroll_down(int n, int visible_rows) {
-        int total = total_lines();
-        int max_scroll = std::max(0, total - visible_rows);
+        int max_scroll = std::max(0, total_lines() - visible_rows);
         scroll_ = std::min(scroll_ + n, max_scroll);
     }
 
     int scroll_offset() const { return scroll_; }
     const std::vector<Text>& lines() const { return lines_; }
 
+    // Total number of content lines (static + list items).
     int total_lines() const {
         int count = static_cast<int>(lines_.size());
-        if (has_list_) {
-            std::vector<Text> list_lines = list_.render(0);
-            count += static_cast<int>(list_lines.size());
-        }
+        if (has_list_)
+            count += static_cast<int>(list_.size());
         return count;
     }
 
@@ -628,7 +640,6 @@ private:
     void handle_key(detail::Key key) {
         if (key == detail::KEY_NONE) return;
 
-        // Quit keys always handled first
         if (key == detail::KEY_QUIT || key == detail::KEY_CTRL_C) {
             running_ = false;
             return;
@@ -637,14 +648,13 @@ private:
             render();
             return;
         }
-        // Delegate to active page's list if present
+
         Page& p = pages_[active_tab_];
         if (p.has_list() && p.list().handle_key(key)) {
             render();
             return;
         }
 
-        // Default key handling
         switch (key) {
         case detail::KEY_LEFT:
             if (active_tab_ > 0) { --active_tab_; render(); }
@@ -657,8 +667,8 @@ private:
             render();
             break;
         case detail::KEY_DOWN: {
-            detail::TermSize ts = detail::get_terminal_size();
-            int content_rows = ts.rows - 3;
+            const detail::TermSize ts = detail::get_terminal_size();
+            const int content_rows = ts.rows - 3;
             pages_[active_tab_].scroll_down(1, content_rows);
             render();
             break;
@@ -669,106 +679,106 @@ private:
     }
 
     void render() {
-        detail::TermSize ts = detail::get_terminal_size();
-        int W = ts.cols;
-        int H = ts.rows;
+        const detail::TermSize ts = detail::get_terminal_size();
+        const int W = ts.cols;
+        const int H = ts.rows;
         if (W < 10 || H < 5) return;
 
         std::string buf;
-        buf.reserve(4096);
+        buf.reserve(static_cast<size_t>(W * H) * 8);
 
-        // Move home instead of clearing to avoid flicker
-        buf += "\033[H\033[0m";
+        buf += "\033[H\033[0m"; // home cursor, reset attributes
 
-        // Build tab labels
+        // Build tab bar: escape sequences and plain-text width in one pass.
         std::string tab_str;
-        for (size_t i = 0; i < pages_.size(); ++i) {
-            if (i == active_tab_) {
-                tab_str += "\033[1;7m " + pages_[i].title() + " \033[0m";
-            } else {
-                tab_str += "\033[0m " + pages_[i].title() + " ";
-            }
-            if (i + 1 < pages_.size()) tab_str += "\033[90m|\033[0m";
-        }
-
-        // Compute plain length of tabs for padding
         size_t tab_plain_len = 0;
         for (size_t i = 0; i < pages_.size(); ++i) {
-            tab_plain_len += pages_[i].title().size() + 2; // space + title + space
-            if (i + 1 < pages_.size()) tab_plain_len += 1; // separator
+            const std::string& tab_title = pages_[i].title();
+            if (i == active_tab_) {
+                tab_str += "\033[1;7m " + tab_title + " \033[0m";
+            } else {
+                tab_str += "\033[0m " + tab_title + " ";
+            }
+            tab_plain_len += tab_title.size() + 2; // leading space + title + trailing space
+            if (i + 1 < pages_.size()) {
+                tab_str += "\033[90m|\033[0m";
+                tab_plain_len += 1; // separator
+            }
         }
 
-        std::string top_border = "\033[90m\xe2\x94\x8c\xe2\x94\x80\033[0m" + tab_str;
+        // Top border: corner + dash + tab bar + remaining dashes + corner.
+        buf += "\033[90m\xe2\x94\x8c\xe2\x94\x80\033[0m";
+        buf += tab_str;
         int remaining = W - 3 - static_cast<int>(tab_plain_len);
         if (remaining > 0) {
-            top_border += "\033[90m";
-            for (int i = 0; i < remaining; ++i)
-                top_border += "\xe2\x94\x80";
-            top_border += "\033[0m";
+            buf += "\033[90m";
+            for (int i = 0; i < remaining; ++i) buf += "\xe2\x94\x80";
+            buf += "\033[0m";
         }
-        top_border += "\033[90m\xe2\x94\x90\033[0m";
-        buf += top_border;
+        buf += "\033[90m\xe2\x94\x90\033[0m";
 
-        // ── Content area ─────────────────────────────────────────
-        int content_rows = H - 3; // top border + bottom border + status line
-        if (content_rows < 1) content_rows = 1;
+        // Content area.
+        int content_rows = std::max(1, H - 3);
 
-        Page& p = pages_[active_tab_];
-        int scroll = p.scroll_offset();
+        const Page& p = pages_[active_tab_];
+        const int scroll = p.scroll_offset();
 
-        // Build combined lines: static lines + list lines
-        std::vector<Text> all_lines(p.lines().begin(), p.lines().end());
+        // Combine static page lines with selectable list lines (if present).
+        const std::vector<Text>& static_lines = p.lines();
+        const int n_static = static_cast<int>(static_lines.size());
+
+        std::vector<Text> list_lines;
         if (p.has_list()) {
-            std::vector<Text> list_lines = p.list().render(W - 4);
-            all_lines.insert(all_lines.end(), list_lines.begin(), list_lines.end());
+            list_lines = p.list().render(W - 4);
         }
-        int total_lines = static_cast<int>(all_lines.size());
+        const int total = n_static + static_cast<int>(list_lines.size());
 
         for (int row = 0; row < content_rows; ++row) {
-            buf += "\033[" + std::to_string(2 + row) + ";1H";
-            buf += "\033[90m\xe2\x94\x82\033[0m"; // left border
+            buf += "\033[";
+            buf += std::to_string(2 + row);
+            buf += ";1H\033[90m\xe2\x94\x82\033[0m"; // row position + left border
 
-            int line_idx = scroll + row;
-            if (line_idx < total_lines) {
-                const Text& line = all_lines[line_idx];
-                std::string rendered = line.render();
-                size_t plain_len = line.length();
-                buf += " " + rendered;
-                int pad = W - 3 - static_cast<int>(plain_len);
-                if (pad > 0) buf += std::string(pad, ' ');
+            const int line_idx = scroll + row;
+            if (line_idx < total) {
+                const Text& line = (line_idx < n_static)
+                    ? static_lines[static_cast<size_t>(line_idx)]
+                    : list_lines[static_cast<size_t>(line_idx - n_static)];
+                const size_t plain_len = line.length();
+                buf += ' ';
+                buf += line.render();
+                const int pad = W - 3 - static_cast<int>(plain_len);
+                if (pad > 0) buf += std::string(static_cast<size_t>(pad), ' ');
             } else {
-                buf += std::string(W - 2, ' ');
+                buf += std::string(static_cast<size_t>(W - 2), ' ');
             }
 
             buf += "\033[90m\xe2\x94\x82\033[0m"; // right border
         }
 
-        // ── Bottom border with status ────────────────────────────
-        buf += "\033[" + std::to_string(H - 1) + ";1H";
-        std::string status_hint;
-        if (p.has_list())
-            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose ";
-        else
-            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
+        // Bottom border with status hints and scroll position.
+        buf += "\033[";
+        buf += std::to_string(H - 1);
+        buf += ";1H";
+
+        const char* status_hint = p.has_list()
+            ? " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose "
+            : " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
 
         std::string scroll_hint;
-        int total = total_lines;
         if (total > content_rows) {
-            int end = std::min(scroll + content_rows, total);
-            scroll_hint = " " + std::to_string(scroll + 1) + "-"
-                + std::to_string(end) + "/" + std::to_string(total) + " ";
+            const int end = std::min(scroll + content_rows, total);
+            scroll_hint = ' ' + std::to_string(scroll + 1) + '-'
+                + std::to_string(end) + '/' + std::to_string(total) + ' ';
         }
 
-        int status_plain_len = static_cast<int>(utf8_display_width(status_hint));
-        int scroll_plain_len = static_cast<int>(scroll_hint.size());
-        int total_fixed = status_plain_len + scroll_plain_len;
-        int left_dash = (W - 2 - total_fixed) / 2;
-        int right_dash = W - 2 - total_fixed - left_dash;
-        if (left_dash < 0) left_dash = 0;
-        if (right_dash < 0) right_dash = 0;
+        const int status_plain_len  = static_cast<int>(utf8_display_width(status_hint));
+        const int scroll_plain_len  = static_cast<int>(scroll_hint.size());
+        const int total_fixed       = status_plain_len + scroll_plain_len;
+        int left_dash  = std::max(0, (W - 2 - total_fixed) / 2);
+        int right_dash = std::max(0, W - 2 - total_fixed - left_dash);
 
         buf += "\033[90m\xe2\x94\x94";
-        for (int i = 0; i < left_dash; ++i) buf += "\xe2\x94\x80";
+        for (int i = 0; i < left_dash; ++i)  buf += "\xe2\x94\x80";
         buf += "\033[0m";
         buf += status_hint;
         buf += "\033[90m";
