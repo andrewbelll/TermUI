@@ -25,6 +25,7 @@ A header-only C++11 terminal GUI framework with no external dependencies. Drop i
 - **Styled text** — bold, underline, reverse, and 16 foreground/background colors
 - **Selectable lists** — keyboard-driven menus with per-item actions or a global `on_select` callback
 - **Tables** — fixed or auto-sized columns with box-drawing separators
+- **File browser** — navigable filesystem widget with directory traversal and file-selection callback
 - **Progress bars** — block-character bars with configurable colors and width
 - **Live updates** — `set_on_tick` callback fires every ~100 ms for animated or polling content
 - **Scrollable content** — any page scrolls when content exceeds the terminal height
@@ -79,7 +80,7 @@ cmake --build build
 ./build/demo
 ```
 
-The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, an about page, and a live-animating progress bar.
+The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, an about page, a live-animating progress bar, and a file browser.
 
 ---
 
@@ -313,6 +314,69 @@ app.set_on_tick([&]() {
     live_page.add_line(bar.render(40));
 });
 ```
+
+---
+
+### FileBrowser
+
+A self-contained filesystem navigator that occupies its own tab. The user browses directories with the standard cursor keys; pressing Enter on a file fires a callback and displays the selected path in the page header.
+
+```cpp
+termui::FileBrowser browser(".");          // start in the current directory
+browser.on_file_selected([](const std::string& path) {
+    // path is the full path of the chosen file
+});
+browser.attach(app, "Files");             // adds the tab and returns Page&
+app.run();
+```
+
+> **Lifetime**: `FileBrowser` must outlive `app.run()`. Item callbacks capture `this`,
+> so the browser object must remain alive for the duration of the event loop.
+
+#### Constructor
+
+```cpp
+explicit FileBrowser(const std::string& start_path = ".");
+```
+
+Opens at `start_path`. Relative paths (e.g. `"."`) are accepted. Hidden entries (names starting with `.`) are excluded from the listing.
+
+#### Methods
+
+| Method | Description |
+|---|---|
+| `FileBrowser& on_file_selected(std::function<void(const std::string&)> cb)` | Registers a callback invoked with the full path whenever the user confirms a file. Returns `*this`. |
+| `const std::string& selected_file() const` | Returns the full path of the last selected file, or an empty string if nothing has been selected yet. |
+| `Page& attach(App& app, const std::string& tab_name = "Files")` | Adds a tab named `tab_name` to `app`, populates it with the initial directory listing, and returns the `Page&`. Must be called before `app.run()`. |
+
+#### Page layout
+
+```
+  File Browser
+  Path: /home/user/projects
+
+> ../
+  src/
+  docs/
+  README.md
+  CMakeLists.txt
+
+  Selected: /home/user/projects/README.md
+```
+
+- `../` — navigate to the parent directory (always the first item)
+- `name/` — enter a subdirectory
+- `name` — select a file; fires `on_file_selected` and updates the `Selected:` line
+
+#### Keys
+
+The standard `SelectableList` keys apply while the Files tab is active:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move cursor |
+| Enter | Enter directory or select file |
+| `←` / `→` | Switch to another tab |
 
 ---
 

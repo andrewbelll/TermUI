@@ -22,6 +22,8 @@
 #  include <unistd.h>
 #  include <termios.h>
 #  include <sys/ioctl.h>
+#  include <dirent.h>
+#  include <sys/stat.h>
 #endif
 
 namespace termui {
@@ -962,6 +964,132 @@ private:
         buf += "\033[J"; // clear from cursor to end of screen
 
         detail::write_raw(buf);
+    }
+};
+
+// ─── FileBrowser ─────────────────────────────────────────────────────────────
+
+// A reusable file browser widget that occupies its own tab in an App.
+// The user can navigate directories with UP/DOWN/ENTER; selecting a file
+// fires on_file_selected() and updates the "Selected:" header line.
+//
+// Lifetime requirement: the FileBrowser instance must outlive app.run(),
+// because SelectableList item lambdas capture `this`.
+class FileBrowser {
+public:
+    explicit FileBrowser(const std::string& start_path = ".")
+        : current_path_(start_path), page_(nullptr) {
+        while (current_path_.size() > 1 && current_path_.back() == '/')
+            current_path_.pop_back();
+    }
+
+    // Callback fired when a file (not a directory) is confirmed; receives the full path.
+    FileBrowser& on_file_selected(std::function<void(const std::string&)> cb) {
+        on_file_selected_ = std::move(cb);
+        return *this;
+    }
+
+    // Full path of the last selected file; empty if nothing has been selected yet.
+    const std::string& selected_file() const { return selected_file_; }
+
+    // Add a tab named tab_name to app, seed its content, and return the Page&.
+    Page& attach(App& app, const std::string& tab_name = "Files") {
+        Page& p = app.add_page(tab_name);
+        page_ = &p;
+        navigate_to(current_path_);
+        return p;
+    }
+
+private:
+    struct Entry { std::string name; bool is_dir; };
+
+    std::string current_path_;
+    std::string selected_file_;
+    std::function<void(const std::string&)> on_file_selected_;
+    Page* page_; // raw ptr safe: deque never invalidates existing elements
+
+    // Returns the parent directory of path (which must have no trailing slash).
+    static std::string parent_path(const std::string& path) {
+        size_t pos = path.rfind('/');
+        if (pos == std::string::npos) return "."; // relative path, no separator
+        if (pos == 0)                return "/";  // e.g. parent of "/foo" is "/"
+        return path.substr(0, pos);
+    }
+
+    std::vector<Entry> list_directory(const std::string& path) const {
+        std::vector<Entry> entries;
+#ifdef _WIN32
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA((path + "\\*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return entries;
+        do {
+            std::string name = fd.cFileName;
+            if (name == "." || name == "..") continue;
+            bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            entries.push_back({name, is_dir});
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+#else
+        DIR* dir = opendir(path.c_str());
+        if (!dir) return entries;
+        struct dirent* ent;
+        while ((ent = readdir(dir)) != nullptr) {
+            std::string name = ent->d_name;
+            if (name[0] == '.') continue; // skip ., .., and hidden entries
+            std::string full = path + "/" + name;
+            struct stat st;
+            bool is_dir = false;
+            if (stat(full.c_str(), &st) == 0)
+                is_dir = S_ISDIR(st.st_mode);
+            entries.push_back({name, is_dir});
+        }
+        closedir(dir);
+#endif
+        // Directories first, then files; alphabetical within each group.
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry& a, const Entry& b) {
+                      if (a.is_dir != b.is_dir) return a.is_dir && !b.is_dir;
+                      return a.name < b.name;
+                  });
+        return entries;
+    }
+
+    void navigate_to(const std::string& path) {
+        current_path_ = path;
+        while (current_path_.size() > 1 && current_path_.back() == '/')
+            current_path_.pop_back();
+
+        page_->clear();
+        page_->add_line(Text("File Browser", Style::bold(Color::Cyan)));
+        page_->add_line(Text("Path: " + current_path_, Style(Color::BrightBlack)));
+        page_->add_line(Text(""));
+        if (!selected_file_.empty())
+            page_->add_line(Text("Selected: ").add(selected_file_, Style(Color::Green)));
+
+        std::vector<Entry> entries = list_directory(current_path_);
+        SelectableList lst;
+
+        const std::string parent = parent_path(current_path_);
+        lst.add_item("../", [this, parent]() { navigate_to(parent); });
+
+        for (const Entry& e : entries) {
+            if (e.is_dir) {
+                std::string dir_path = current_path_ + "/" + e.name;
+                lst.add_item(e.name + "/", [this, dir_path]() { navigate_to(dir_path); });
+            }
+        }
+        for (const Entry& e : entries) {
+            if (!e.is_dir) {
+                std::string file_path = current_path_ + "/" + e.name;
+                lst.add_item(e.name, [this, file_path]() {
+                    selected_file_ = file_path;
+                    if (on_file_selected_) on_file_selected_(selected_file_);
+                    navigate_to(current_path_);
+                });
+            }
+        }
+
+        page_->set_list(lst);
     }
 };
 

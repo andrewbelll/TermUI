@@ -144,6 +144,13 @@ int main() {
         rebuild_live();
     });
 
+    // ── Tab 7: Files — interactive file browser ───────────────────
+    termui::FileBrowser browser(".");
+    browser.on_file_selected([](const std::string& /*path*/) {
+        // full path available here for integration with other code
+    });
+    browser.attach(app, "Files");
+
     app.run();
     return 0;
 }
