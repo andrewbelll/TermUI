@@ -16,40 +16,36 @@ int main() {
     dashboard.add_line(termui::Text("  Version:   ", termui::Style(termui::Color::BrightBlack))
                            .add("1.0.0", termui::Style()));
 
-    // ── Tab 2: Settings — selectable list ───────────────────────
-    auto& settings = app.add_page("Settings");
-    settings.add_line(termui::Text("Settings", termui::Style::bold(termui::Color::Yellow)));
-    settings.add_line(termui::Text(""));
-    settings.add_line(termui::Text("Use Up/Down to navigate, Enter to select:"));
-    settings.add_line(termui::Text(""));
+    // ── Tab 2: Actions — per-item lambdas ───────────────────────
+    auto& actions_page = app.add_page("Actions");
 
-    termui::SelectableList menu;
-    menu.add_item("Theme: Dark")
-        .add_item("Language: English")
-        .add_item("Notifications: On")
-        .add_item("Auto-save: Enabled")
-        .add_item("Font size: Medium")
-        .add_item("Reset to defaults");
+    auto rebuild = [&](termui::Text result) {
+        actions_page.clear();
+        actions_page.add_line(termui::Text("Actions Demo", termui::Style::bold(termui::Color::Yellow)));
+        actions_page.add_line(termui::Text(""));
+        actions_page.add_line(termui::Text("Press Enter on an item:"));
+        actions_page.add_line(termui::Text(""));
+        actions_page.add_line(termui::Text(""));
+        actions_page.add_line(result);
+    };
 
-    // Status line will be appended after the list
-    settings.add_line(termui::Text(""));
-    settings.add_line(termui::Text("  (no selection yet)", termui::Style(termui::Color::BrightBlack)));
+    termui::SelectableList action_menu;
+    action_menu
+        .add_item("Say hello", [&]() {
+            rebuild(termui::Text("  Hello, World!", termui::Style(termui::Color::Green)));
+        })
+        .add_item("Show a warning", [&]() {
+            rebuild(termui::Text("  Warning: something might go wrong.", termui::Style(termui::Color::Yellow)));
+        })
+        .add_item("Report an error", [&]() {
+            rebuild(termui::Text("  Error: something went wrong!", termui::Style(termui::Color::Red)));
+        })
+        .add_item("Celebrate!", [&]() {
+            rebuild(termui::Text("  *** Great job! ***", termui::Style::bold(termui::Color::Cyan)));
+        });
 
-    menu.on_select([&settings](int idx, const std::string& item) {
-        // Rebuild the status lines at the end
-        settings.clear();
-        settings.add_line(termui::Text("Settings", termui::Style::bold(termui::Color::Yellow)));
-        settings.add_line(termui::Text(""));
-        settings.add_line(termui::Text("Use Up/Down to navigate, Enter to select:"));
-        settings.add_line(termui::Text(""));
-        settings.add_line(termui::Text(""));
-        termui::Text status;
-        status.add("  Selected: ", termui::Style::bold())
-              .add("[" + std::to_string(idx) + "] " + item, termui::Style(termui::Color::Green));
-        settings.add_line(status);
-    });
-
-    settings.set_list(menu);
+    rebuild(termui::Text("  (nothing selected yet)", termui::Style(termui::Color::BrightBlack)));
+    actions_page.set_list(action_menu);
 
     // ── Tab 3: Data — table display ─────────────────────────────
     auto& data = app.add_page("Data");

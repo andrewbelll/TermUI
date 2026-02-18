@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 #include <functional>
 #include <algorithm>
 #include <cstdio>
@@ -493,8 +494,10 @@ public:
     SelectableList()
         : cursor_(0), cursor_style_(Style::reverse()) {}
 
-    SelectableList& add_item(const std::string& item) {
+    SelectableList& add_item(const std::string& item,
+                             std::function<void()> action = nullptr) {
         items_.push_back(item);
+        actions_.push_back(std::move(action));
         return *this;
     }
 
@@ -526,7 +529,10 @@ public:
             if (cursor_ + 1 < static_cast<int>(items_.size())) { ++cursor_; return true; }
             return false;
         case detail::KEY_ENTER:
-            if (on_select_) on_select_(cursor_, items_[static_cast<size_t>(cursor_)]);
+            if (!actions_.empty() && actions_[static_cast<size_t>(cursor_)])
+                actions_[static_cast<size_t>(cursor_)]();
+            if (on_select_)
+                on_select_(cursor_, items_[static_cast<size_t>(cursor_)]);
             return true;
         default:
             return false;
@@ -553,7 +559,8 @@ public:
     }
 
 private:
-    std::vector<std::string> items_;
+    std::vector<std::string>           items_;
+    std::vector<std::function<void()>> actions_;
     int cursor_;
     std::function<void(int, const std::string&)> on_select_;
     Style normal_style_;
@@ -655,7 +662,7 @@ public:
 
 private:
     std::string title_;
-    std::vector<Page> pages_;
+    std::deque<Page> pages_;
     size_t active_tab_;
     bool running_;
 
