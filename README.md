@@ -77,7 +77,7 @@ cmake --build build
 ./build/demo
 ```
 
-The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable settings menu, a data table, a scrollable list, and an about page.
+The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, and an about page.
 
 ---
 
@@ -208,12 +208,15 @@ A keyboard-navigable list with a highlighted cursor row. Attach to a page with `
 
 ```cpp
 termui::SelectableList list;
-list.add_item("Option A")
-    .add_item("Option B")
-    .add_item("Option C");
 
+// Per-item actions: each item carries its own lambda.
+list.add_item("Say hello",  [&]() { /* ... */ })
+    .add_item("Show stats", [&]() { /* ... */ })
+    .add_item("Quit",       [&]() { /* ... */ });
+
+// Optional global callback — fires after the per-item action (if any).
 list.on_select([](int index, const std::string& item) {
-    // called when Enter is pressed
+    // called for every Enter press; receives index and item text
 });
 
 page.set_list(list);
@@ -221,8 +224,8 @@ page.set_list(list);
 
 | Method | Description |
 |---|---|
-| `SelectableList& add_item(const std::string& item)` | Appends an item. Returns `*this`. |
-| `SelectableList& on_select(std::function<void(int, const std::string&)> cb)` | Sets the callback invoked on Enter. Arguments: item index and item text. Returns `*this`. |
+| `SelectableList& add_item(const std::string& item, std::function<void()> action = nullptr)` | Appends an item with an optional per-item action invoked on Enter. Returns `*this`. |
+| `SelectableList& on_select(std::function<void(int, const std::string&)> cb)` | Sets a global callback invoked on Enter for any item (receives index and text). Runs after the per-item action if both are set. Returns `*this`. |
 | `SelectableList& normal_style(const Style& s)` | Style for non-cursor rows (default: no attributes). Returns `*this`. |
 | `SelectableList& cursor_style(const Style& s)` | Style for the cursor row (default: `Style::reverse()`). Returns `*this`. |
 | `int cursor() const` | Returns the current cursor index (0-based). |

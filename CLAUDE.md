@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Identity
 
-- **Name**: TermUI (renamed from `tgui`)
+- **Name**: TermUI
 - **Type**: Header-only C++11 terminal GUI framework, no external dependencies
 - **License**: GPL 3.0
 
@@ -68,24 +68,6 @@ All public code lives in `namespace termui`. Internal platform code is in `names
 - Pages rebuild via `clear()` + `add_line()` in callbacks — no in-place line mutation
 - `SelectableList` is attached to a page via `page.set_list(list)` after items and callback are configured
 
-## Git State
+## Git
 
-- Branch: `main`
-- Auth: GitHub CLI (`gh`)
-- Commits (oldest → newest):
-  - `5b730e5` — LICENSE
-  - `79ce196` — Initial commit: all project files
-  - `0361972` — Remove ProgressBar class and live-refresh mechanism
-  - `c47439e` — Optimise and clarify termui.hpp
-  - `e56b199` — Add README with full API reference and quick-start guide
-
-## Session History
-
-1. `/init` run — CLAUDE.md created
-2. Project renamed from `tgui` → `TermUI`: namespace, filenames, include guards, CMake, CLAUDE.md all updated
-3. Git repo initialized, GitHub CLI authenticated, pushed to GitHub
-4. `ProgressBar` class and `set_on_refresh` mechanism removed from the library
-5. `termui.hpp` optimised and clarified
-6. `README.md` written: preview mockup, features, requirements, installation, quick-start, full API reference, keyboard shortcuts, license
-7. `context.md` merged into `CLAUDE.md` and deleted
-8. Code review completed and all critical/high-priority issues fixed in refactoring session
+- Branch: `main`; auth via GitHub CLI (`gh`)
