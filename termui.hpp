@@ -67,6 +67,8 @@ struct Style {
         if (is_underline) seq += ";4";
         if (is_reverse)   seq += ";7";
         if (fg != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg));
+        // ANSI background codes are foreground + 10: standard 30-37 → 40-47,
+        // bright 90-97 → 100-107.  The +10 offset holds for both ranges.
         if (bg != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg) + 10);
         seq += "m";
         return seq;
@@ -85,10 +87,14 @@ inline size_t utf8_display_width(const std::string& s) {
     const size_t len = s.size();
     while (i < len) {
         unsigned char c = static_cast<unsigned char>(s[i]);
-        if      (c < 0x80)            { ++i; }
-        else if ((c & 0xE0) == 0xC0)  { i += 2; }
-        else if ((c & 0xF0) == 0xE0)  { i += 3; }
-        else                           { i += 4; }
+        size_t char_len = 1;
+        if      (c >= 0x80) {
+            if      ((c & 0xE0) == 0xC0) char_len = 2;
+            else if ((c & 0xF0) == 0xE0) char_len = 3;
+            else                          char_len = 4;
+        }
+        if (i + char_len > len) break; // truncated sequence
+        i += char_len;
         ++width;
     }
     return width;
@@ -107,6 +113,7 @@ inline std::string utf8_truncate(const std::string& s, size_t max_width) {
             else if ((c & 0xF0) == 0xE0) char_len = 3;
             else                          char_len = 4;
         }
+        if (i + char_len > len) break; // truncated sequence
         i += char_len;
         ++width;
     }
@@ -119,14 +126,14 @@ struct TextSpan {
     std::string content;
     Style style;
 
-    TextSpan() {}
-    explicit TextSpan(const std::string& text) : content(text) {}
+    TextSpan() = default;
+    explicit TextSpan(const std::string& text) : content(text), style() {}
     TextSpan(const std::string& text, const Style& s) : content(text), style(s) {}
 };
 
 class Text {
 public:
-    Text() {}
+    Text() = default;
     explicit Text(const std::string& content) { spans_.push_back(TextSpan(content)); }
     Text(const std::string& content, const Style& s) { spans_.push_back(TextSpan(content, s)); }
 
@@ -213,8 +220,9 @@ public:
             for (size_t c = 0; c < widths.size(); ++c) total += widths[c];
             int usable = available_width - separators * 3; // " | " between cols
             if (usable > 0 && total > usable) {
+                // Round-half-up to minimise cumulative truncation error.
                 for (size_t c = 0; c < widths.size(); ++c)
-                    widths[c] = std::max(1, widths[c] * usable / total);
+                    widths[c] = std::max(1, (widths[c] * usable + total / 2) / total);
             }
         }
 
@@ -299,34 +307,34 @@ struct TermSize {
 
 #ifdef _WIN32
 
-static HANDLE hStdout = INVALID_HANDLE_VALUE;
-static HANDLE hStdin = INVALID_HANDLE_VALUE;
-static DWORD orig_out_mode = 0;
-static DWORD orig_in_mode = 0;
-static UINT orig_cp = 0;
+inline HANDLE& hStdout_ref() { static HANDLE h = INVALID_HANDLE_VALUE; return h; }
+inline HANDLE& hStdin_ref()  { static HANDLE h = INVALID_HANDLE_VALUE; return h; }
+inline DWORD&  orig_out_mode_ref() { static DWORD v = 0; return v; }
+inline DWORD&  orig_in_mode_ref()  { static DWORD v = 0; return v; }
+inline UINT&   orig_cp_ref()       { static UINT  v = 0; return v; }
 
 inline void enter_raw_mode() {
-    hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
-    hStdin = GetStdHandle(STD_INPUT_HANDLE);
-    GetConsoleMode(hStdout, &orig_out_mode);
-    GetConsoleMode(hStdin, &orig_in_mode);
-    DWORD out_mode = orig_out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-    SetConsoleMode(hStdout, out_mode);
+    hStdout_ref() = GetStdHandle(STD_OUTPUT_HANDLE);
+    hStdin_ref()  = GetStdHandle(STD_INPUT_HANDLE);
+    GetConsoleMode(hStdout_ref(), &orig_out_mode_ref());
+    GetConsoleMode(hStdin_ref(),  &orig_in_mode_ref());
+    DWORD out_mode = orig_out_mode_ref() | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(hStdout_ref(), out_mode);
     DWORD in_mode = ENABLE_WINDOW_INPUT;
-    SetConsoleMode(hStdin, in_mode);
-    orig_cp = GetConsoleOutputCP();
+    SetConsoleMode(hStdin_ref(), in_mode);
+    orig_cp_ref() = GetConsoleOutputCP();
     SetConsoleOutputCP(65001);
 }
 
 inline void exit_raw_mode() {
-    SetConsoleMode(hStdout, orig_out_mode);
-    SetConsoleMode(hStdin, orig_in_mode);
-    SetConsoleOutputCP(orig_cp);
+    SetConsoleMode(hStdout_ref(), orig_out_mode_ref());
+    SetConsoleMode(hStdin_ref(),  orig_in_mode_ref());
+    SetConsoleOutputCP(orig_cp_ref());
 }
 
 inline TermSize get_terminal_size() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(hStdout, &csbi);
+    GetConsoleScreenBufferInfo(hStdout_ref(), &csbi);
     TermSize ts;
     ts.cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     ts.rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
@@ -336,12 +344,12 @@ inline TermSize get_terminal_size() {
 inline Key read_key() {
     INPUT_RECORD ir;
     DWORD count;
-    DWORD wait_result = WaitForSingleObject(hStdin, 100);
+    DWORD wait_result = WaitForSingleObject(hStdin_ref(), 100);
     if (wait_result != WAIT_OBJECT_0) return KEY_NONE;
     while (true) {
-        if (!PeekConsoleInput(hStdin, &ir, 1, &count) || count == 0)
+        if (!PeekConsoleInput(hStdin_ref(), &ir, 1, &count) || count == 0)
             return KEY_NONE;
-        ReadConsoleInput(hStdin, &ir, 1, &count);
+        ReadConsoleInput(hStdin_ref(), &ir, 1, &count);
         if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT) return KEY_RESIZE;
         if (ir.EventType != KEY_EVENT || !ir.Event.KeyEvent.bKeyDown) continue;
         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
@@ -361,19 +369,32 @@ inline Key read_key() {
 
 #else // POSIX
 
-static struct termios orig_termios;
-static bool raw_mode_active = false;
+// Function-local statics avoid ODR violations when this header is included in
+// multiple translation units.  Each accessor returns a reference to a single
+// shared instance across the whole program.
+inline struct termios& orig_termios_ref() {
+    static struct termios t;
+    return t;
+}
+inline bool& raw_mode_active_ref() {
+    static bool active = false;
+    return active;
+}
+inline volatile sig_atomic_t& g_resize_flag_ref() {
+    static volatile sig_atomic_t flag = 0;
+    return flag;
+}
 
 inline void exit_raw_mode() {
-    if (raw_mode_active) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-        raw_mode_active = false;
+    if (raw_mode_active_ref()) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios_ref());
+        raw_mode_active_ref() = false;
     }
 }
 
 inline void enter_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    struct termios raw = orig_termios;
+    tcgetattr(STDIN_FILENO, &orig_termios_ref());
+    struct termios raw = orig_termios_ref();
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
@@ -381,7 +402,7 @@ inline void enter_raw_mode() {
     raw.c_cc[VMIN]  = 0;
     raw.c_cc[VTIME] = 1; // 100 ms read timeout
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    raw_mode_active = true;
+    raw_mode_active_ref() = true;
 }
 
 inline TermSize get_terminal_size() {
@@ -394,11 +415,9 @@ inline TermSize get_terminal_size() {
     return ts;
 }
 
-static volatile sig_atomic_t g_resize_flag = 0;
-
 inline Key read_key() {
-    if (g_resize_flag) {
-        g_resize_flag = 0;
+    if (g_resize_flag_ref()) {
+        g_resize_flag_ref() = 0;
         return KEY_RESIZE;
     }
 
@@ -415,11 +434,22 @@ inline Key read_key() {
         if (read(STDIN_FILENO, &seq[0], 1) <= 0) return KEY_OTHER;
         if (read(STDIN_FILENO, &seq[1], 1) <= 0) return KEY_OTHER;
         if (seq[0] == '[') {
+            // Single-letter final byte: standard cursor-movement sequences.
             switch (seq[1]) {
                 case 'A': return KEY_UP;
                 case 'B': return KEY_DOWN;
                 case 'C': return KEY_RIGHT;
                 case 'D': return KEY_LEFT;
+            }
+            // Longer CSI sequences (e.g. \033[1;5C): drain until a letter
+            // terminates the sequence so stale bytes don't pollute the next
+            // read_key() call.
+            if (seq[1] >= '0' && seq[1] <= '9') {
+                unsigned char drain;
+                while (read(STDIN_FILENO, &drain, 1) > 0) {
+                    if ((drain >= 'A' && drain <= 'Z') ||
+                        (drain >= 'a' && drain <= 'z')) break;
+                }
             }
         }
         return KEY_OTHER;
@@ -433,9 +463,17 @@ inline Key read_key() {
 inline void write_raw(const std::string& s) {
 #ifdef _WIN32
     DWORD written;
-    WriteConsoleA(hStdout, s.c_str(), static_cast<DWORD>(s.size()), &written, NULL);
+    WriteConsoleA(hStdout_ref(), s.c_str(), static_cast<DWORD>(s.size()), &written, NULL);
 #else
-    ::write(STDOUT_FILENO, s.c_str(), s.size());
+    // Loop to handle partial writes (signal interrupts, pipe back-pressure, …).
+    const char* ptr = s.c_str();
+    size_t remaining = s.size();
+    while (remaining > 0) {
+        ssize_t n = ::write(STDOUT_FILENO, ptr, remaining);
+        if (n <= 0) break; // terminal closed or unrecoverable error
+        ptr       += static_cast<size_t>(n);
+        remaining -= static_cast<size_t>(n);
+    }
 #endif
 }
 
@@ -472,7 +510,11 @@ public:
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
 
-    const std::string& selected_item() const { return items_[static_cast<size_t>(cursor_)]; }
+    const std::string& selected_item() const {
+        static const std::string empty;
+        if (items_.empty()) return empty;
+        return items_[static_cast<size_t>(cursor_)];
+    }
 
     bool handle_key(detail::Key key) {
         if (items_.empty()) return false;
@@ -622,15 +664,20 @@ private:
         struct sigaction sa;
         std::memset(&sa, 0, sizeof(sa));
 
-        sa.sa_handler = [](int) { detail::g_resize_flag = 1; };
+        sa.sa_handler = [](int) { detail::g_resize_flag_ref() = 1; };
         sigaction(SIGWINCH, &sa, NULL);
 
+        // SIGINT/SIGTERM handler: only async-signal-safe operations permitted.
+        //   • ::write() with a literal string — safe.
+        //   • tcsetattr() (called inside exit_raw_mode) — safe.
+        //   • _Exit() — safe.
+        // Notably absent: std::to_string, malloc, stdio — all unsafe in handlers.
         sa.sa_handler = [](int) {
-            detail::show_cursor();
-            detail::clear_screen();
-            detail::move_cursor(0, 0);
+            // Restore cursor visibility, clear screen, home cursor in one write.
+            static const char seq[] = "\033[?25h\033[2J\033[1;1H";
+            ::write(STDOUT_FILENO, seq, sizeof(seq) - 1);
             detail::exit_raw_mode();
-            std::_Exit(0);
+            _Exit(0);
         };
         sigaction(SIGINT, &sa, NULL);
         sigaction(SIGTERM, &sa, NULL);
@@ -699,7 +746,7 @@ private:
             } else {
                 tab_str += "\033[0m " + tab_title + " ";
             }
-            tab_plain_len += tab_title.size() + 2; // leading space + title + trailing space
+            tab_plain_len += utf8_display_width(tab_title) + 2; // leading space + title + trailing space
             if (i + 1 < pages_.size()) {
                 tab_str += "\033[90m|\033[0m";
                 tab_plain_len += 1; // separator

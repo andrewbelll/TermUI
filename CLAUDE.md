@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Name**: TermUI (renamed from `tgui`)
 - **Type**: Header-only C++11 terminal GUI framework, no external dependencies
-- **GitHub**: https://github.com/andrewbelll/TermUI.git
-- **Author**: Andrew Bell (andrewbell321@gmail.com)
 - **License**: GPL 3.0
 
 ## File Structure
@@ -73,8 +71,7 @@ All public code lives in `namespace termui`. Internal platform code is in `names
 ## Git State
 
 - Branch: `main`
-- Remote: `origin` → https://github.com/andrewbelll/TermUI.git
-- Auth: GitHub CLI (`gh`), logged in as `andrewbelll`
+- Auth: GitHub CLI (`gh`)
 - Commits (oldest → newest):
   - `5b730e5` — LICENSE
   - `79ce196` — Initial commit: all project files
@@ -91,3 +88,4 @@ All public code lives in `namespace termui`. Internal platform code is in `names
 5. `termui.hpp` optimised and clarified
 6. `README.md` written: preview mockup, features, requirements, installation, quick-start, full API reference, keyboard shortcuts, license
 7. `context.md` merged into `CLAUDE.md` and deleted
+8. Code review completed and all critical/high-priority issues fixed in refactoring session
