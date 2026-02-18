@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <csignal>
-#include <chrono>
 
 #ifdef _WIN32
 #  ifndef NOMINMAX
@@ -152,62 +151,6 @@ public:
 
 private:
     std::vector<TextSpan> spans_;
-};
-
-// ─── ProgressBar ────────────────────────────────────────────────────────────
-
-class ProgressBar {
-public:
-    explicit ProgressBar(double value = 0.0)
-        : value_(value), filled_style_(Color::Green),
-          empty_style_(Color::BrightBlack), show_percent_(true) {}
-
-    void set_value(double v) {
-        if (v < 0.0) v = 0.0;
-        if (v > 1.0) v = 1.0;
-        value_ = v;
-    }
-
-    double value() const { return value_; }
-
-    ProgressBar& filled_style(const Style& s) { filled_style_ = s; return *this; }
-    ProgressBar& empty_style(const Style& s) { empty_style_ = s; return *this; }
-    ProgressBar& show_percent(bool v) { show_percent_ = v; return *this; }
-
-    Text to_text(int width) const {
-        // Format: [████░░░░░░] 45%
-        std::string pct_str;
-        if (show_percent_) {
-            int pct = static_cast<int>(value_ * 100.0 + 0.5);
-            pct_str = " " + std::to_string(pct) + "%";
-        }
-        int bar_width = width - 2 - static_cast<int>(pct_str.size()); // subtract [ ]
-        if (bar_width < 1) bar_width = 1;
-
-        int filled = static_cast<int>(value_ * bar_width + 0.5);
-        if (filled > bar_width) filled = bar_width;
-        int empty = bar_width - filled;
-
-        std::string filled_str, empty_str;
-        for (int i = 0; i < filled; ++i)
-            filled_str += "\xe2\x96\x88"; // U+2588 █
-        for (int i = 0; i < empty; ++i)
-            empty_str += "\xe2\x96\x91";  // U+2591 ░
-
-        Text t;
-        t.add("[");
-        if (!filled_str.empty()) t.add(filled_str, filled_style_);
-        if (!empty_str.empty()) t.add(empty_str, empty_style_);
-        t.add("]");
-        if (show_percent_) t.add(pct_str);
-        return t;
-    }
-
-private:
-    double value_;
-    Style filled_style_;
-    Style empty_style_;
-    bool show_percent_;
 };
 
 // ─── Table ──────────────────────────────────────────────────────────────────
@@ -626,8 +569,7 @@ private:
 class App {
 public:
     explicit App(const std::string& title = "")
-        : title_(title), active_tab_(0), running_(false),
-          refresh_interval_ms_(0) {}
+        : title_(title), active_tab_(0), running_(false) {}
 
     Page& add_page(const std::string& name) {
         pages_.push_back(Page(name));
@@ -638,36 +580,17 @@ public:
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
 
-    void set_on_refresh(std::function<void(App&)> callback, int interval_ms = 1000) {
-        refresh_callback_ = callback;
-        refresh_interval_ms_ = interval_ms;
-        last_refresh_ = std::chrono::steady_clock::now();
-    }
-
     void run() {
         if (pages_.empty()) return;
         install_signals();
         detail::enter_raw_mode();
         detail::hide_cursor();
         running_ = true;
-        last_refresh_ = std::chrono::steady_clock::now();
 
         render();
         while (running_) {
             detail::Key key = detail::read_key();
             handle_key(key);
-
-            // Live refresh check
-            if (refresh_callback_ && refresh_interval_ms_ > 0) {
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - last_refresh_).count();
-                if (elapsed >= refresh_interval_ms_) {
-                    refresh_callback_(*this);
-                    last_refresh_ = now;
-                    render();
-                }
-            }
         }
 
         detail::show_cursor();
@@ -681,9 +604,6 @@ private:
     std::vector<Page> pages_;
     size_t active_tab_;
     bool running_;
-    std::function<void(App&)> refresh_callback_;
-    int refresh_interval_ms_;
-    std::chrono::steady_clock::time_point last_refresh_;
 
     void install_signals() {
 #ifndef _WIN32

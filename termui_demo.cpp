@@ -1,51 +1,20 @@
 #include "termui.hpp"
-#include <cmath>
 
 int main() {
     termui::App app("TermUI Demo");
 
-    // ── Tab 1: Dashboard — live-updating progress bars ──────────
+    // ── Tab 1: Dashboard ─────────────────────────────────────────
     auto& dashboard = app.add_page("Dashboard");
-    dashboard.add_line(termui::Text("Live Dashboard", termui::Style::bold(termui::Color::Cyan)));
+    dashboard.add_line(termui::Text("Dashboard", termui::Style::bold(termui::Color::Cyan)));
     dashboard.add_line(termui::Text(""));
-    dashboard.add_line(termui::Text("Progress bars update automatically:"));
+    dashboard.add_line(termui::Text("System Status", termui::Style::underline()));
     dashboard.add_line(termui::Text(""));
-    // Placeholder lines for progress bars (indices 4, 5, 6 — label + bar pairs)
-    dashboard.add_line(termui::Text("  Download:", termui::Style(termui::Color::Green)));
-    dashboard.add_line(termui::Text(""));  // bar placeholder
-    dashboard.add_line(termui::Text("  Upload:", termui::Style(termui::Color::Yellow)));
-    dashboard.add_line(termui::Text(""));  // bar placeholder
-    dashboard.add_line(termui::Text("  Processing:", termui::Style(termui::Color::Magenta)));
-    dashboard.add_line(termui::Text(""));  // bar placeholder
-
-    int tick = 0;
-    app.set_on_refresh([&tick](termui::App& a) {
-        ++tick;
-        auto& p = a.page(0);
-
-        double v1 = std::fmod(tick * 0.02, 1.0);
-        double v2 = std::fmod(tick * 0.015, 1.0);
-        double v3 = std::fmod(tick * 0.03, 1.0);
-
-        termui::ProgressBar bar1(v1);
-        termui::ProgressBar bar2(v2);
-        bar2.filled_style(termui::Style(termui::Color::Yellow));
-        termui::ProgressBar bar3(v3);
-        bar3.filled_style(termui::Style(termui::Color::Magenta));
-
-        // Replace lines at indices 5, 7, 9 (the bar placeholders)
-        p.clear();
-        p.add_line(termui::Text("Live Dashboard", termui::Style::bold(termui::Color::Cyan)));
-        p.add_line(termui::Text(""));
-        p.add_line(termui::Text("Progress bars update automatically:"));
-        p.add_line(termui::Text(""));
-        p.add_line(termui::Text("  Download:", termui::Style(termui::Color::Green)));
-        p.add_line(bar1.to_text(40));
-        p.add_line(termui::Text("  Upload:", termui::Style(termui::Color::Yellow)));
-        p.add_line(bar2.to_text(40));
-        p.add_line(termui::Text("  Processing:", termui::Style(termui::Color::Magenta)));
-        p.add_line(bar3.to_text(40));
-    }, 200);
+    dashboard.add_line(termui::Text("  Service:   ", termui::Style(termui::Color::BrightBlack))
+                           .add("Running", termui::Style(termui::Color::Green)));
+    dashboard.add_line(termui::Text("  Uptime:    ", termui::Style(termui::Color::BrightBlack))
+                           .add("14 days, 3 hours", termui::Style()));
+    dashboard.add_line(termui::Text("  Version:   ", termui::Style(termui::Color::BrightBlack))
+                           .add("1.0.0", termui::Style()));
 
     // ── Tab 2: Settings — selectable list ───────────────────────
     auto& settings = app.add_page("Settings");
@@ -132,7 +101,6 @@ int main() {
     about.add_line(termui::Text(""));
     about.add_line(termui::Text("Features:", termui::Style::underline()));
     about.add_line(termui::Text("  - Tabbed pages with styled text"));
-    about.add_line(termui::Text("  - Progress bars with live refresh"));
     about.add_line(termui::Text("  - Selectable lists with callbacks"));
     about.add_line(termui::Text("  - Formatted tables"));
     about.add_line(termui::Text("  - Scrollable content"));
