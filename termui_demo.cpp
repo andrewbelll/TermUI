@@ -102,6 +102,48 @@ int main() {
     about.add_line(termui::Text("  - Scrollable content"));
     about.add_line(termui::Text("  - Box-drawing borders"));
 
+    // ── Tab 6: Live — animated progress bar via on_tick ──────────
+    auto& live = app.add_page("Live");
+
+    // State for the animated bar: progress steps from 0.0 to 1.0 then loops.
+    termui::ProgressBar bar;
+    bar.set_fill_color(termui::Color::Green)
+       .set_empty_color(termui::Color::BrightBlack);
+
+    double progress = 0.0;
+
+    // Seed the page with its initial content so it is non-empty before run().
+    auto rebuild_live = [&]() {
+        live.clear();
+        live.add_line(termui::Text("Live Update Demo", termui::Style::bold(termui::Color::Green)));
+        live.add_line(termui::Text(""));
+        live.add_line(termui::Text("Progress bar animates every ~100 ms:",
+                                   termui::Style(termui::Color::BrightBlack)));
+        live.add_line(termui::Text(""));
+        live.add_line(bar.render(30));
+        live.add_line(termui::Text(""));
+
+        // Descriptive label that changes with progress.
+        if (progress < 0.33)
+            live.add_line(termui::Text("  Starting up...", termui::Style(termui::Color::Yellow)));
+        else if (progress < 0.67)
+            live.add_line(termui::Text("  In progress...", termui::Style(termui::Color::Cyan)));
+        else if (progress < 1.0)
+            live.add_line(termui::Text("  Almost there!", termui::Style(termui::Color::BrightCyan)));
+        else
+            live.add_line(termui::Text("  Complete!", termui::Style::bold(termui::Color::Green)));
+    };
+
+    rebuild_live();
+
+    // Tick callback: advance progress by ~2% per tick (100 ms), loop at 100%.
+    app.set_on_tick([&]() {
+        progress += 0.02;
+        if (progress > 1.0) progress = 0.0;
+        bar.set_value(progress);
+        rebuild_live();
+    });
+
     app.run();
     return 0;
 }

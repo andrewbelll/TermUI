@@ -282,6 +282,68 @@ private:
     }
 };
 
+// ─── ProgressBar ────────────────────────────────────────────────────────────
+
+// A simple horizontal progress bar that renders to a single Text line.
+// The user owns the value and calls render() inside a tick callback.
+//
+// Example (inside an on_tick callback):
+//   bar.set_value(progress);
+//   live_page.clear();
+//   live_page.add_line(bar.render(30));
+class ProgressBar {
+public:
+    ProgressBar()
+        : value_(0.0), fill_(Color::Green), empty_(Color::Default) {}
+
+    // Set the fill fraction in the range [0.0, 1.0].
+    ProgressBar& set_value(double v) {
+        value_ = v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+        return *this;
+    }
+
+    // Color applied to the filled block characters.
+    ProgressBar& set_fill_color(Color c)  { fill_  = c; return *this; }
+
+    // Color applied to the empty block characters.
+    ProgressBar& set_empty_color(Color c) { empty_ = c; return *this; }
+
+    double value() const { return value_; }
+
+    // Render a bar of the given character width followed by a percentage label.
+    // Characters: U+2588 FULL BLOCK (█) for fill, U+2591 LIGHT SHADE (░) for empty.
+    Text render(int width = 20) const {
+        if (width <= 0) width = 1;
+        const int filled = static_cast<int>(value_ * width + 0.5);
+        const int empty  = width - filled;
+
+        // UTF-8 encodings: █ = \xe2\x96\x88, ░ = \xe2\x96\x91
+        const char* fill_char  = "\xe2\x96\x88";
+        const char* empty_char = "\xe2\x96\x91";
+
+        std::string fill_str, empty_str;
+        fill_str.reserve(static_cast<size_t>(filled) * 3);
+        empty_str.reserve(static_cast<size_t>(empty)  * 3);
+        for (int i = 0; i < filled; ++i) fill_str  += fill_char;
+        for (int i = 0; i < empty;  ++i) empty_str += empty_char;
+
+        const int pct = static_cast<int>(value_ * 100.0 + 0.5);
+
+        Text t;
+        t.add("[", Style(Color::BrightBlack));
+        if (!fill_str.empty())  t.add(fill_str,  Style(fill_));
+        if (!empty_str.empty()) t.add(empty_str, Style(empty_));
+        t.add("] ", Style(Color::BrightBlack));
+        t.add(std::to_string(pct) + "%", Style::bold());
+        return t;
+    }
+
+private:
+    double value_;
+    Color  fill_;
+    Color  empty_;
+};
+
 // Page and SelectableList are defined after the detail namespace.
 
 // ─── Platform Detail ────────────────────────────────────────────────────────
@@ -630,7 +692,13 @@ private:
 class App {
 public:
     explicit App(const std::string& title = "")
-        : title_(title), active_tab_(0), running_(false) {}
+        : title_(title), active_tab_(0), running_(false), on_tick_() {}
+
+    // Register a callback invoked roughly every 100 ms when no key is pressed.
+    // Inside the callback the application has already re-entered the render
+    // cycle, so mutating page content and returning is sufficient — render()
+    // is called automatically after on_tick_() returns.
+    void set_on_tick(std::function<void()> cb) { on_tick_ = std::move(cb); }
 
     Page& add_page(const std::string& name) {
         pages_.push_back(Page(name));
@@ -651,7 +719,11 @@ public:
         render();
         while (running_) {
             detail::Key key = detail::read_key();
-            handle_key(key);
+            if (key == detail::KEY_NONE) {
+                if (on_tick_) { on_tick_(); render(); }
+            } else {
+                handle_key(key);
+            }
         }
 
         detail::show_cursor();
@@ -665,6 +737,7 @@ private:
     std::deque<Page> pages_;
     size_t active_tab_;
     bool running_;
+    std::function<void()> on_tick_;
 
     void install_signals() {
 #ifndef _WIN32
