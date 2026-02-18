@@ -1,11 +1,11 @@
 # TermUI
 
-A header-only C++11 terminal GUI framework with no external dependencies. Drop in a single file and get tabbed pages, styled text, selectable lists, tables, and scrollable content — on Linux, macOS, and Windows.
+A header-only C++11 terminal GUI framework with no external dependencies. Drop in a single file and get tabbed pages, styled text, selectable lists, tables, progress bars, and live-updating content — on Linux, macOS, and Windows.
 
 ## Preview
 
 ```
-┌─ Dashboard │ Settings │ Data │ Scroll │ About ─────────────────────┐
+┌─ Dashboard │ Actions │ Data │ Scroll │ About │ Live ───────────────┐
 │                                                                     │
 │  Dashboard                                                          │
 │                                                                     │
@@ -23,8 +23,10 @@ A header-only C++11 terminal GUI framework with no external dependencies. Drop i
 
 - **Tabbed navigation** — multiple pages, switch with arrow keys
 - **Styled text** — bold, underline, reverse, and 16 foreground/background colors
-- **Selectable lists** — keyboard-driven menus with `on_select` callbacks
+- **Selectable lists** — keyboard-driven menus with per-item actions or a global `on_select` callback
 - **Tables** — fixed or auto-sized columns with box-drawing separators
+- **Progress bars** — block-character bars with configurable colors and width
+- **Live updates** — `set_on_tick` callback fires every ~100 ms for animated or polling content
 - **Scrollable content** — any page scrolls when content exceeds the terminal height
 - **Box-drawing borders** — clean UI using Unicode box characters
 - **Flicker-free rendering** — single-write buffer flush per frame
@@ -77,7 +79,7 @@ cmake --build build
 ./build/demo
 ```
 
-The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, and an about page.
+The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, an about page, and a live-animating progress bar.
 
 ---
 
@@ -98,6 +100,7 @@ termui::App app("Title");  // optional title string (reserved for future use)
 | `Page& page(size_t index)` | Returns a reference to the page at `index`. |
 | `size_t page_count() const` | Returns the total number of pages. |
 | `size_t active_tab() const` | Returns the index of the currently visible tab. |
+| `void set_on_tick(std::function<void()> cb)` | Registers a callback invoked ~every 100 ms when no key is pressed. Use it to update page content for live/animated displays; `render()` is called automatically after each tick. |
 | `void run()` | Enters raw terminal mode and blocks until the user quits (`q` or Ctrl+C). Cleans up the terminal on exit. |
 
 ---
@@ -272,6 +275,44 @@ struct Column {
 ```
 
 Columns are stored internally as `Table::Column` objects and exposed through `render()`.
+
+---
+
+### ProgressBar
+
+A horizontal progress bar that renders to a single `Text` line using block characters (`█` fill, `░` empty).
+
+```cpp
+termui::ProgressBar bar;
+bar.set_fill_color(termui::Color::Green)
+   .set_empty_color(termui::Color::BrightBlack)
+   .set_value(0.75);  // 75%
+
+page.add_line(bar.render(30));  // 30-character wide bar
+```
+
+| Method | Description |
+|---|---|
+| `ProgressBar& set_value(double v)` | Sets the fill fraction in `[0.0, 1.0]`. Clamped automatically. Returns `*this`. |
+| `ProgressBar& set_fill_color(Color c)` | Color for filled block characters (default: `Color::Green`). Returns `*this`. |
+| `ProgressBar& set_empty_color(Color c)` | Color for empty block characters (default: `Color::Default`). Returns `*this`. |
+| `double value() const` | Returns the current fill fraction. |
+| `Text render(int width = 20) const` | Renders the bar as a `Text` line with a `[░░██] nn%` format. `width` is the number of block characters (not total line width). |
+
+Typical live-update pattern using `set_on_tick`:
+
+```cpp
+termui::ProgressBar bar;
+double progress = 0.0;
+
+app.set_on_tick([&]() {
+    progress += 0.01;
+    if (progress > 1.0) progress = 0.0;
+    bar.set_value(progress);
+    live_page.clear();
+    live_page.add_line(bar.render(40));
+});
+```
 
 ---
 
