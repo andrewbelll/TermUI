@@ -385,6 +385,7 @@ enum Key {
     KEY_UP,
     KEY_DOWN,
     KEY_ENTER,
+    KEY_SPACE,
     KEY_RESIZE,
     KEY_OTHER
 };
@@ -452,6 +453,7 @@ inline Key read_key() {
             case VK_RIGHT: return KEY_RIGHT;
             case VK_UP:    return KEY_UP;
             case VK_DOWN:  return KEY_DOWN;
+            case VK_SPACE: return KEY_SPACE;
         }
         if (wch != 0) return KEY_OTHER;
     }
@@ -519,6 +521,7 @@ inline Key read_key() {
     if (c == '\r')                 return KEY_ENTER;   // CR
     if (c == 'q' || c == 'Q')     return KEY_QUIT;
     if (c == '\x03')               return KEY_CTRL_C;  // ETX / Ctrl+C
+    if (c == ' ')                  return KEY_SPACE;
 
     if (c == 27) { // ESC sequence
         unsigned char seq[2];
@@ -585,12 +588,13 @@ inline void show_cursor() { write_raw("\033[?25h"); }
 class SelectableList {
 public:
     SelectableList()
-        : cursor_(0), cursor_style_(Style::reverse()) {}
+        : cursor_(0), cursor_style_(Style::reverse()), multi_select_(false) {}
 
     SelectableList& add_item(const std::string& item,
                              std::function<void()> action = nullptr) {
         items_.push_back(item);
         actions_.push_back(std::move(action));
+        selected_.push_back(false);
         return *this;
     }
 
@@ -612,6 +616,21 @@ public:
         return items_[static_cast<size_t>(cursor_)];
     }
 
+    SelectableList& set_multi_select(bool enabled) { multi_select_ = enabled; return *this; }
+    bool is_multi_select() const { return multi_select_; }
+
+    std::vector<std::string> get_selected_items() const {
+        std::vector<std::string> result;
+        for (size_t i = 0; i < items_.size(); ++i)
+            if (i < selected_.size() && selected_[i])
+                result.push_back(items_[i]);
+        return result;
+    }
+
+    void clear_selection() {
+        for (size_t i = 0; i < selected_.size(); ++i) selected_[i] = false;
+    }
+
     bool handle_key(detail::Key key) {
         if (items_.empty()) return false;
         switch (key) {
@@ -627,6 +646,13 @@ public:
             if (on_select_)
                 on_select_(cursor_, items_[static_cast<size_t>(cursor_)]);
             return true;
+        case detail::KEY_SPACE:
+            if (multi_select_) {
+                const size_t idx = static_cast<size_t>(cursor_);
+                if (idx < selected_.size()) selected_[idx] = !selected_[idx];
+                return true;
+            }
+            return false;
         default:
             return false;
         }
@@ -638,6 +664,25 @@ public:
         for (size_t i = 0; i < items_.size(); ++i) {
             const bool is_cursor = (static_cast<int>(i) == cursor_);
             const Style& st = is_cursor ? cursor_style_ : normal_style_;
+
+            if (multi_select_) {
+                const bool checked = (i < selected_.size()) && selected_[i];
+                std::string cursor_mark = is_cursor ? "> " : "  ";
+                std::string checkbox    = checked   ? "[x] " : "[ ] ";
+                std::string item_text   = items_[i];
+                const int prefix_width = 6; // "> " (2) + "[x] " (4)
+                if (width > prefix_width) {
+                    int avail = width - prefix_width;
+                    if (static_cast<int>(utf8_display_width(item_text)) > avail)
+                        item_text = utf8_truncate(item_text, static_cast<size_t>(avail));
+                }
+                Text line;
+                line.add(cursor_mark, st);
+                line.add(checkbox, Style(Color::BrightBlack));
+                line.add(item_text, st);
+                lines.push_back(line);
+                continue;
+            }
 
             std::string content = is_cursor ? "> " : "  ";
             content += items_[i];
@@ -654,7 +699,9 @@ public:
 private:
     std::vector<std::string>           items_;
     std::vector<std::function<void()>> actions_;
+    std::vector<bool>                  selected_;
     int cursor_;
+    bool multi_select_;
     std::function<void(int, const std::string&)> on_select_;
     Style normal_style_;
     Style cursor_style_;
@@ -743,6 +790,10 @@ public:
     }
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
+
+    void set_active_tab(size_t index) {
+        if (index < pages_.size()) active_tab_ = index;
+    }
 
     void run() {
         if (pages_.empty()) return;
@@ -932,9 +983,14 @@ private:
         buf += std::to_string(H - 1);
         buf += ";1H";
 
-        const char* status_hint = p.has_list()
-            ? " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose "
-            : " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
+        const char* status_hint;
+        if (p.has_list() && p.list().is_multi_select())
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs"
+                          "  [\xe2\x86\x91\xe2\x86\x93] select  [Space] toggle  [Enter] confirm ";
+        else if (p.has_list())
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose ";
+        else
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
 
         std::string scroll_hint;
         if (total > content_rows) {
