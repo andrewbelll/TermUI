@@ -77,7 +77,7 @@ int main() {
     home.add_line(termui::Text("  5. Selected paths appear on the Results tab"));
     home.add_line(termui::Text(""));
     home.add_line(termui::Text("Press q to quit.",
-                               termui::Style(termui::Color::BrightBlack)));
+                               termui::Color::BrightBlack));
 
     // State for dynamically created tabs
     termui::Page* zip_page    = nullptr;
@@ -110,12 +110,12 @@ int main() {
         zip_page->add_line(termui::Text("ZIP Contents",
                                         termui::Style().bold().fg(termui::Color::Cyan)));
         zip_page->add_line(termui::Text("Source: " + path,
-                                        termui::Style(termui::Color::BrightBlack)));
+                                        termui::Color::BrightBlack));
         zip_page->add_line(termui::Text(""));
         zip_page->add_line(termui::Text(
             std::to_string(extracted.size()) + " file(s)  \xe2\x80\x94"
             "  Space to toggle, Enter on \xe2\x86\x92 Send Selected to confirm.",
-            termui::Style(termui::Color::BrightBlack)));
+            termui::Color::BrightBlack));
         zip_page->add_line(termui::Text(""));
 
         // Build multi-select list
@@ -147,17 +147,17 @@ int main() {
                 result_page->add_line(termui::Text(""));
                 if (sel.empty()) {
                     result_page->add_line(termui::Text(
-                        "  (no files selected)", termui::Style(termui::Color::BrightBlack)));
+                        "  (no files selected)", termui::Color::BrightBlack));
                 } else {
                     for (size_t j = 0; j < sel.size(); ++j)
                         result_page->add_line(
-                            termui::Text("  \xe2\x80\xa2 ", termui::Style(termui::Color::Cyan))
+                            termui::Text("  \xe2\x80\xa2 ", termui::Color::Cyan)
                                 .add(sel[j], termui::Style()));
                 }
                 result_page->add_line(termui::Text(""));
                 result_page->add_line(termui::Text(
                     std::to_string(sel.size()) + " file(s) selected.",
-                    termui::Style(termui::Color::BrightBlack)));
+                    termui::Color::BrightBlack));
 
                 app.set_active_tab(result_tab_idx);
             });

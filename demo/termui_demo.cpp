@@ -109,36 +109,33 @@ int main() {
 
     double progress = 0.0;
 
-    // Seed the page with its initial content so it is non-empty before run().
-    auto rebuild_live = [&]() {
-        live.clear();
-        live.add_line(termui::Text("Live Update Demo", termui::Style().bold().fg(termui::Color::Green)));
-        live.add_blank();
-        live.add_line(termui::Text("Progress bar animates every ~100 ms:",
-                                   termui::Style(termui::Color::BrightBlack)));
-        live.add_blank();
-        live.add_line(bar.render(30));
-        live.add_blank();
+    // Seed static lines once; indices 4 (bar) and 6 (label) are updated on tick.
+    live.add_line(termui::Text("Live Update Demo", termui::Color::Green)); // 0
+    live.add_blank();                                                        // 1
+    live.add_line(termui::Text("Progress bar animates every ~100 ms:",
+                               termui::Color::BrightBlack));                // 2
+    live.add_blank();                                                        // 3
+    live.add_line(bar.render(30));                                           // 4 — bar (dynamic)
+    live.add_blank();                                                        // 5
+    live.add_line(termui::Text("  Starting up...", termui::Color::Yellow));  // 6 — label (dynamic)
 
-        // Descriptive label that changes with progress.
-        if (progress < 0.33)
-            live.add_line(termui::Text("  Starting up...", termui::Style(termui::Color::Yellow)));
-        else if (progress < 0.67)
-            live.add_line(termui::Text("  In progress...", termui::Style(termui::Color::Cyan)));
-        else if (progress < 1.0)
-            live.add_line(termui::Text("  Almost there!", termui::Style(termui::Color::BrightCyan)));
-        else
-            live.add_line(termui::Text("  Complete!", termui::Style().bold().fg(termui::Color::Green)));
-    };
-
-    rebuild_live();
-
-    // Tick callback: advance progress by ~2% per tick (100 ms), loop at 100%.
+    // Tick callback: advance progress, then update only the two dynamic lines.
     app.set_on_tick([&]() {
         progress += 0.02;
         if (progress > 1.0) progress = 0.0;
         bar.set_value(progress);
-        rebuild_live();
+        live.update_line(4, bar.render(30));
+
+        termui::Text label;
+        if (progress < 0.33)
+            label = termui::Text("  Starting up...", termui::Color::Yellow);
+        else if (progress < 0.67)
+            label = termui::Text("  In progress...", termui::Color::Cyan);
+        else if (progress < 1.0)
+            label = termui::Text("  Almost there!", termui::Color::BrightCyan);
+        else
+            label = termui::Text("  Complete!", termui::Style().bold().fg(termui::Color::Green));
+        live.update_line(6, label);
     });
 
     // ── Tab 7: Files — interactive file browser ───────────────────

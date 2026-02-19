@@ -145,6 +145,7 @@ public:
     Text() = default;
     explicit Text(const std::string& content) { spans_.push_back(TextSpan(content)); }
     Text(const std::string& content, const Style& s) { spans_.push_back(TextSpan(content, s)); }
+    Text(const std::string& content, Color fg) { spans_.push_back(TextSpan(content, Style(fg))); }
 
     Text& add(const std::string& content, const Style& s = Style()) {
         spans_.push_back(TextSpan(content, s));
@@ -599,9 +600,18 @@ public:
         return *this;
     }
 
-    SelectableList& on_select(std::function<void(int, const std::string&)> cb) {
-        on_select_ = cb;
+    // Post-selection hook called on every ENTER. Fires after the per-item action.
+    // Use per-item actions for specific behaviour; use this for cross-cutting
+    // concerns (e.g. dismiss a status bar, refresh a sibling page).
+    // Note: fires after per-item action when both are set.
+    SelectableList& set_on_select(std::function<void(int, const std::string&)> cb) {
+        on_select_ = std::move(cb);
         return *this;
+    }
+
+    // deprecated: use set_on_select()
+    SelectableList& on_select(std::function<void(int, const std::string&)> cb) {
+        return set_on_select(std::move(cb));
     }
 
     SelectableList& normal_style(const Style& s) { normal_style_ = s; return *this; }
@@ -756,8 +766,15 @@ public:
         return *this;
     }
 
+    // Update a single line in-place without clearing the page.
+    // Silently ignored if index is out of range.
+    Page& update_line(size_t index, const Text& text) {
+        if (index < lines_.size()) lines_[index] = text;
+        return *this;
+    }
+
     // Removes all static lines and resets the scroll position to 0.
-    void clear() { lines_.clear(); scroll_ = 0; }
+    Page& clear() { lines_.clear(); scroll_ = 0; return *this; }
 
     Page& set_list(const SelectableList& list) {
         list_ = list;
@@ -773,8 +790,9 @@ public:
         scroll_ = std::max(0, scroll_ - n);
     }
 
-    void scroll_down(int n, int visible_rows) {
-        int max_scroll = std::max(0, total_lines() - visible_rows);
+    void scroll_down(int n = 1, int visible_rows = 0) {
+        int effective_rows = visible_rows > 0 ? visible_rows : total_lines();
+        int max_scroll = std::max(0, total_lines() - effective_rows);
         scroll_ = std::min(scroll_ + n, max_scroll);
     }
 
@@ -808,7 +826,7 @@ public:
     // Inside the callback the application has already re-entered the render
     // cycle, so mutating page content and returning is sufficient — render()
     // is called automatically after on_tick_() returns.
-    void set_on_tick(std::function<void()> cb) { on_tick_ = std::move(cb); }
+    App& set_on_tick(std::function<void()> cb) { on_tick_ = std::move(cb); return *this; }
 
     Page& add_page(const std::string& name) {
         pages_.push_back(Page(name));
@@ -1127,6 +1145,7 @@ public:
     const std::string& selected_file() const { return selected_file_; }
 
     // Add a tab named tab_name to app, seed its content, and return the Page&.
+    // LIFETIME: this object must outlive app.run() — lambdas capture `this`.
     Page& attach(App& app, const std::string& tab_name = "Files") {
         Page& p = app.add_page(tab_name);
         page_ = &p;

@@ -1,13 +1,3 @@
-```
-  _______ ______ _____  __  __ _    _ _____ 
- |__   __|  ____|  __ \|  \/  | |  | |_   _|
-    | |  | |__  | |__) | \  / | |  | | | |  
-    | |  |  __| |  _  /| |\/| | |  | | | |  
-    | |  | |____| | \ \| |  | | |__| |_| |_ 
-    |_|  |______|_|  \_\_|  |_|\____/|_____|
-                                                                                
-```
-
 A header-only C++11 terminal GUI framework with no external dependencies. Drop in a single file and get tabbed pages, styled text, selectable lists, tables, progress bars, and live-updating content — on Linux, macOS, and Windows.
 
 ## Preview
@@ -141,7 +131,7 @@ page.add_blank().add_lines(table.render());
 termui::SelectableList list;
 list.set_multi_select(true);
 list.add_item("Option A").add_item("Option B").add_item("Option C");
-list.on_select([&](int, const std::string&) {
+list.set_on_select([&](int, const std::string&) {
     std::vector<std::string> chosen = list.get_selected_items();
     // process chosen...
 });
@@ -170,7 +160,7 @@ termui::App app("Title");  // optional title string (reserved for future use)
 | `Page& active_page()` | Returns a reference to the currently visible page. Shorthand for `page(active_tab())`. |
 | `size_t page_count() const` | Returns the total number of pages. |
 | `size_t active_tab() const` | Returns the index of the currently visible tab. |
-| `void set_on_tick(std::function<void()> cb)` | Registers a callback invoked ~every 100 ms when no key is pressed. Use it to update page content for live/animated displays; `render()` is called automatically after each tick. |
+| `App& set_on_tick(std::function<void()> cb)` | Registers a callback invoked ~every 100 ms when no key is pressed. Use it to update page content for live/animated displays; `render()` is called automatically after each tick. Returns `*this` for chaining (e.g. `app.set_on_tick(...).run()`). |
 | `void run()` | Enters raw terminal mode and blocks until the user quits (`q` or Ctrl+C). Cleans up the terminal on exit. |
 
 ---
@@ -191,13 +181,14 @@ auto& p = app.add_page("My Page");
 | `Page& add_line(const std::string& text)` | Appends a plain-text line. Returns `*this` for chaining. |
 | `Page& add_lines(const std::vector<Text>& lines)` | Appends each element of `lines`. Convenient for adding table output. Returns `*this` for chaining. |
 | `Page& add_blank()` | Appends an empty line (vertical spacing shorthand). Returns `*this` for chaining. |
-| `void clear()` | Removes all lines and resets the scroll position to 0. |
+| `Page& update_line(size_t index, const Text& text)` | Replaces the line at `index` in-place. Silently ignored if `index` is out of range. Use this to update a single dynamic line (e.g. a progress bar) without clearing the page. Returns `*this`. |
+| `Page& clear()` | Removes all lines and resets the scroll position to 0. Returns `*this` for chaining. |
 | `Page& set_list(const SelectableList& list)` | Attaches a `SelectableList` to this page. List items are rendered after the static lines. Returns `*this` for chaining. |
 | `bool has_list() const` | Returns `true` if a list has been set. |
 | `SelectableList& list()` | Returns a mutable reference to the attached list. |
 | `const SelectableList& list() const` | Returns a const reference to the attached list. |
 | `void scroll_up(int n = 1)` | Scrolls up by `n` lines (clamped to 0). |
-| `void scroll_down(int n, int visible_rows)` | Scrolls down by `n` lines, clamped so the last line stays visible given `visible_rows` of display height. |
+| `void scroll_down(int n = 1, int visible_rows = 0)` | Scrolls down by `n` lines. When `visible_rows > 0`, clamps so the last line stays visible; when `0` (default), allows scrolling to the last line regardless of terminal height. |
 | `int scroll_offset() const` | Returns the current scroll position (0 = top). |
 | `int total_lines() const` | Returns the total number of content lines (static lines + list items). |
 | `const std::vector<Text>& lines() const` | Returns the vector of static `Text` lines. |
@@ -211,9 +202,10 @@ auto& p = app.add_page("My Page");
 #### Text
 
 ```cpp
-termui::Text t1;                                    // empty
-termui::Text t2("plain string");                    // unstyled
-termui::Text t3("label", termui::Style::bold());    // styled
+termui::Text t1;                                              // empty
+termui::Text t2("plain string");                              // unstyled
+termui::Text t3("label", termui::Style().bold());             // styled
+termui::Text t4("Status", termui::Color::Green);              // color shorthand
 ```
 
 | Method | Description |
@@ -284,8 +276,9 @@ list.add_item("Say hello",  [&]() { /* ... */ })
     .add_item("Show stats", [&]() { /* ... */ })
     .add_item("Quit",       [&]() { /* ... */ });
 
-// Optional global callback — fires after the per-item action (if any).
-list.on_select([](int index, const std::string& item) {
+// Optional post-selection hook — fires after the per-item action (if any).
+// Use set_on_select for cross-cutting concerns (e.g. refresh a sibling page).
+list.set_on_select([](int index, const std::string& item) {
     // called for every Enter press; receives index and item text
 });
 
@@ -295,7 +288,7 @@ page.set_list(list);
 | Method | Description |
 |---|---|
 | `SelectableList& add_item(const std::string& item, std::function<void()> action = nullptr)` | Appends an item with an optional per-item action invoked on Enter. Returns `*this`. |
-| `SelectableList& on_select(std::function<void(int, const std::string&)> cb)` | Sets a global callback invoked on Enter for any item (receives index and text). Runs after the per-item action if both are set. Returns `*this`. |
+| `SelectableList& set_on_select(std::function<void(int, const std::string&)> cb)` | Post-selection hook invoked on Enter for any item (receives index and text). Fires after the per-item action when both are set. Use for cross-cutting concerns (e.g. refresh a sibling page). Returns `*this`. |
 | `SelectableList& clear_items()` | Clears all items, resets cursor to 0, clears the `on_select` callback, and restores default styles. Returns `*this`. |
 | `SelectableList& normal_style(const Style& s)` | Style for non-cursor rows (default: no attributes). Returns `*this`. |
 | `SelectableList& cursor_style(const Style& s)` | Style for the cursor row (default: `Style().reversed()`). Returns `*this`. |
@@ -373,12 +366,14 @@ Typical live-update pattern using `set_on_tick`:
 termui::ProgressBar bar;
 double progress = 0.0;
 
+// Seed page once — index 0 is the dynamic bar line.
+live_page.add_line(bar.render(40));
+
 app.set_on_tick([&]() {
     progress += 0.01;
     if (progress > 1.0) progress = 0.0;
     bar.set_value(progress);
-    live_page.clear();
-    live_page.add_line(bar.render(40));
+    live_page.update_line(0, bar.render(40));  // update only the bar
 });
 ```
 
@@ -465,13 +460,13 @@ std::string termui::utf8_truncate(const std::string& s, size_t max_width);
 
 ## Keyboard Shortcuts
 
-| Key | Action |
-|---|---|
-| `q` or `Q` | Quit |
-| Ctrl+C | Quit |
-| `←` / `→` | Switch tabs; tab bar scrolls automatically when tabs exceed terminal width |
-| `↑` / `↓` | Scroll page (or move list cursor when a list is active) |
-| Enter | Confirm selection in a `SelectableList` |
+| Key        | Action                                                                     |
+| ------------| ----------------------------------------------------------------------------|
+| `q` or `Q` | Quit                                                                       |
+| Ctrl+C     | Quit                                                                       |
+| `←` / `→`  | Switch tabs; tab bar scrolls automatically when tabs exceed terminal width |
+| `↑` / `↓`  | Scroll page (or move list cursor when a list is active)                    |
+| Enter      | Confirm selection in a `SelectableList`                                    |
 
 Terminal resize (SIGWINCH on POSIX, `WINDOW_BUFFER_SIZE_EVENT` on Windows) is handled automatically — the UI redraws at the new dimensions.
 
