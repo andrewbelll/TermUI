@@ -1,4 +1,4 @@
-#include "termui.hpp"
+#include "../termui.hpp"
 
 int main() {
     termui::App app("TermUI Demo");

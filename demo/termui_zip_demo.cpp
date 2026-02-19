@@ -1,4 +1,4 @@
-#include "termui.hpp"
+#include "../termui.hpp"
 #include <cstdio>      // popen/pclose/_popen/_pclose, fgets, snprintf
 #include <cstdlib>     // system
 #ifdef _WIN32
