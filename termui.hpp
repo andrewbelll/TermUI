@@ -802,7 +802,7 @@ private:
 class App {
 public:
     explicit App(const std::string& title = "")
-        : title_(title), active_tab_(0), running_(false), on_tick_() {}
+        : title_(title), active_tab_(0), tab_offset_(0), running_(false), on_tick_() {}
 
     // Register a callback invoked roughly every 100 ms when no key is pressed.
     // Inside the callback the application has already re-entered the render
@@ -857,6 +857,7 @@ private:
     // page is erased.
     std::deque<Page> pages_;
     size_t active_tab_;
+    size_t tab_offset_;
     bool running_;
     std::function<void()> on_tick_;
 
@@ -909,7 +910,11 @@ private:
 
         switch (key) {
         case detail::KEY_LEFT:
-            if (active_tab_ > 0) { --active_tab_; render(); }
+            if (active_tab_ > 0) {
+                --active_tab_;
+                if (active_tab_ < tab_offset_) tab_offset_ = active_tab_;
+                render();
+            }
             break;
         case detail::KEY_RIGHT:
             if (active_tab_ + 1 < pages_.size()) { ++active_tab_; render(); }
@@ -941,21 +946,62 @@ private:
 
         buf += "\033[H\033[0m"; // home cursor, reset attributes
 
-        // Build tab bar: escape sequences and plain-text width in one pass.
+        // Ensure active_tab_ is not left of the visible window (right scroll is
+        // handled by the advancement loop below).
+        if (active_tab_ < tab_offset_) tab_offset_ = active_tab_;
+
+        // Returns the index of the last tab that fits when rendering from `offset`
+        // within `budget` display columns.  Always returns at least `offset`.
+        auto compute_last_visible = [&](size_t offset, int budget) -> size_t {
+            if (offset >= pages_.size()) return offset;
+            size_t last = offset;
+            int used = static_cast<int>(utf8_display_width(pages_[offset].title())) + 2;
+            for (size_t i = offset + 1; i < pages_.size(); ++i) {
+                const int tab_w = static_cast<int>(utf8_display_width(pages_[i].title())) + 2;
+                // Reserve 2 cols for ' >' indicator if there are tabs after this one.
+                const int right_reserve = (i + 1 < pages_.size()) ? 2 : 0;
+                if (used + 1 + tab_w + right_reserve > budget) break;
+                used += 1 + tab_w; // separator + tab
+                last = i;
+            }
+            return last;
+        };
+
+        // Advance tab_offset_ until active_tab_ is within the visible window.
+        while (true) {
+            const int budget = W - 3 - (tab_offset_ > 0 ? 2 : 0);
+            const size_t lv = compute_last_visible(tab_offset_, budget);
+            if (active_tab_ <= lv) break;
+            ++tab_offset_;
+        }
+
+        // Final visible range for rendering.
+        const int tab_budget = W - 3 - (tab_offset_ > 0 ? 2 : 0);
+        const size_t last_visible = compute_last_visible(tab_offset_, tab_budget);
+
+        // Build tab bar string.
         std::string tab_str;
         size_t tab_plain_len = 0;
-        for (size_t i = 0; i < pages_.size(); ++i) {
+        if (tab_offset_ > 0) {
+            tab_str += "\033[90m<\033[0m "; // dim '<' + plain space
+            tab_plain_len += 2;
+        }
+        for (size_t i = tab_offset_; i <= last_visible; ++i) {
             const std::string& tab_title = pages_[i].title();
             if (i == active_tab_) {
                 tab_str += "\033[1;7m " + tab_title + " \033[0m";
             } else {
                 tab_str += "\033[0m " + tab_title + " ";
             }
-            tab_plain_len += utf8_display_width(tab_title) + 2; // leading space + title + trailing space
-            if (i + 1 < pages_.size()) {
+            tab_plain_len += utf8_display_width(tab_title) + 2;
+            if (i < last_visible) {
                 tab_str += "\033[90m|\033[0m";
                 tab_plain_len += 1; // separator
             }
+        }
+        if (last_visible + 1 < pages_.size()) {
+            tab_str += " \033[90m>\033[0m"; // plain space + dim '>'
+            tab_plain_len += 2;
         }
 
         // Top border: corner + dash + tab bar + remaining dashes + corner.

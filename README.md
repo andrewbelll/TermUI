@@ -1,27 +1,36 @@
-# TermUI
+```
+  _______ ______ _____  __  __ _    _ _____ 
+ |__   __|  ____|  __ \|  \/  | |  | |_   _|
+    | |  | |__  | |__) | \  / | |  | | | |  
+    | |  |  __| |  _  /| |\/| | |  | | | |  
+    | |  | |____| | \ \| |  | | |__| |_| |_ 
+    |_|  |______|_|  \_\_|  |_|\____/|_____|
+                                                                                
+```
 
 A header-only C++11 terminal GUI framework with no external dependencies. Drop in a single file and get tabbed pages, styled text, selectable lists, tables, progress bars, and live-updating content — on Linux, macOS, and Windows.
 
 ## Preview
 
 ```
-┌─ Dashboard │ Actions │ Data │ Scroll │ About │ Live ───────────────┐
-│                                                                     │
-│  Dashboard                                                          │
-│                                                                     │
-│  System Status                                                      │
-│    Service:   Running                                               │
-│    Uptime:    14 days, 3 hours                                      │
-│    Version:   1.0.0                                                 │
-│                                                                     │
-│                                                                     │
-│                                                                     │
-└────── [q] quit  [←→] tabs  [↑↓] scroll ───────────────────────────┘
+┌─ Dashboard │ Actions │ Data │ Scroll │ About │ Live │ Files │ Logs  >─┐
+│                                                                         │
+│  Dashboard                                                              │
+│                                                                         │
+│  System Status                                                          │
+│    Service:   Running                                                   │
+│    Uptime:    14 days, 3 hours                                          │
+│    Version:   1.0.0                                                     │
+│                                                                         │
+│                                                                         │
+└────────────────── [q] quit  [←→] tabs  [↑↓] scroll ───────────────────┘
 ```
+
+When tabs overflow the terminal width, dim `<` / `>` indicators appear at the edges and the bar scrolls automatically as you switch tabs.
 
 ## Features
 
-- **Tabbed navigation** — multiple pages, switch with arrow keys
+- **Tabbed navigation** — multiple pages, switch with arrow keys; tab bar scrolls horizontally with `<`/`>` indicators when tabs exceed the terminal width
 - **Styled text** — bold, underline, reverse, and 16 foreground/background colors
 - **Selectable lists** — keyboard-driven menus with per-item actions or a global `on_select` callback
 - **Tables** — fixed or auto-sized columns with box-drawing separators
@@ -80,7 +89,7 @@ cmake --build build
 ./build/demo
 ```
 
-The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, an about page, a live-animating progress bar, and a file browser.
+The demo (`termui_demo.cpp`) covers every feature across 15 tabs: styled text, a selectable actions menu with per-item callbacks, a data table, a scrollable list, an about page, a live-animating progress bar, a file browser, and additional static-content tabs that overflow a standard 80-column terminal to demonstrate horizontal tab bar scrolling.
 
 ---
 
@@ -460,7 +469,7 @@ std::string termui::utf8_truncate(const std::string& s, size_t max_width);
 |---|---|
 | `q` or `Q` | Quit |
 | Ctrl+C | Quit |
-| `←` / `→` | Switch tabs |
+| `←` / `→` | Switch tabs; tab bar scrolls automatically when tabs exceed terminal width |
 | `↑` / `↓` | Scroll page (or move list cursor when a list is active) |
 | Enter | Confirm selection in a `SelectableList` |
 

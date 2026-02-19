@@ -148,6 +148,70 @@ int main() {
     });
     browser.attach(app, "Files");
 
+    // ── Tab 8: Logs ───────────────────────────────────────────────
+    auto& logs = app.add_page("Logs");
+    logs.add_line(termui::Text("Application Logs", termui::Style().bold().fg(termui::Color::Yellow)));
+    logs.add_blank();
+    logs.add_line(termui::Text("[INFO]  Service started successfully.", termui::Style(termui::Color::Green)));
+    logs.add_line(termui::Text("[WARN]  High memory usage detected.", termui::Style(termui::Color::Yellow)));
+    logs.add_line(termui::Text("[ERROR] Connection timeout on port 8080.", termui::Style(termui::Color::Red)));
+
+    // ── Tab 9: Config ─────────────────────────────────────────────
+    auto& config = app.add_page("Config");
+    config.add_line(termui::Text("Configuration", termui::Style().bold().fg(termui::Color::Cyan)));
+    config.add_blank();
+    config.add_line(termui::Text("  host:    localhost"));
+    config.add_line(termui::Text("  port:    8080"));
+    config.add_line(termui::Text("  debug:   false"));
+
+    // ── Tab 10: Network ───────────────────────────────────────────
+    auto& network = app.add_page("Network");
+    network.add_line(termui::Text("Network Status", termui::Style().bold().fg(termui::Color::Blue)));
+    network.add_blank();
+    network.add_line(termui::Text("  Interface:  eth0"));
+    network.add_line(termui::Text("  IP:         192.168.1.100"));
+    network.add_line(termui::Text("  Latency:    12 ms"));
+
+    // ── Tab 11: Metrics ───────────────────────────────────────────
+    auto& metrics = app.add_page("Metrics");
+    metrics.add_line(termui::Text("Metrics", termui::Style().bold().fg(termui::Color::Magenta)));
+    metrics.add_blank();
+    metrics.add_line(termui::Text("  CPU:     42%"));
+    metrics.add_line(termui::Text("  Memory:  68%"));
+    metrics.add_line(termui::Text("  Disk:    55%"));
+
+    // ── Tab 12: Alerts ────────────────────────────────────────────
+    auto& alerts = app.add_page("Alerts");
+    alerts.add_line(termui::Text("Active Alerts", termui::Style().bold().fg(termui::Color::Red)));
+    alerts.add_blank();
+    alerts.add_line(termui::Text("  [!] CPU spike at 14:32", termui::Style(termui::Color::Yellow)));
+    alerts.add_line(termui::Text("  [!] Disk usage above 90%", termui::Style(termui::Color::Red)));
+
+    // ── Tab 13: Users ─────────────────────────────────────────────
+    auto& users = app.add_page("Users");
+    users.add_line(termui::Text("Active Users", termui::Style().bold().fg(termui::Color::Cyan)));
+    users.add_blank();
+    users.add_line(termui::Text("  alice   (admin)"));
+    users.add_line(termui::Text("  bob     (user)"));
+    users.add_line(termui::Text("  charlie (user)"));
+
+    // ── Tab 14: Events ────────────────────────────────────────────
+    auto& events = app.add_page("Events");
+    events.add_line(termui::Text("Event Stream", termui::Style().bold().fg(termui::Color::BrightBlack)));
+    events.add_blank();
+    events.add_line(termui::Text("  14:31 — deploy started"));
+    events.add_line(termui::Text("  14:33 — health check passed"));
+    events.add_line(termui::Text("  14:35 — deploy complete"));
+
+    // ── Tab 15: Help ──────────────────────────────────────────────
+    auto& help_page = app.add_page("Help");
+    help_page.add_line(termui::Text("Help & Shortcuts", termui::Style().bold().fg(termui::Color::BrightWhite)));
+    help_page.add_blank();
+    help_page.add_line(termui::Text("  \xe2\x86\x90 \xe2\x86\x92     Switch tabs"));
+    help_page.add_line(termui::Text("  \xe2\x86\x91 \xe2\x86\x93     Scroll / select"));
+    help_page.add_line(termui::Text("  Enter   Confirm selection"));
+    help_page.add_line(termui::Text("  q       Quit"));
+
     app.run();
     return 0;
 }
