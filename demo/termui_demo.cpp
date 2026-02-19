@@ -5,10 +5,10 @@ int main() {
 
     // ── Tab 1: Dashboard ─────────────────────────────────────────
     auto& dashboard = app.add_page("Dashboard");
-    dashboard.add_line(termui::Text("Dashboard", termui::Style::bold(termui::Color::Cyan)));
-    dashboard.add_line(termui::Text(""));
-    dashboard.add_line(termui::Text("System Status", termui::Style::underline()));
-    dashboard.add_line(termui::Text(""));
+    dashboard.add_line(termui::Text("Dashboard", termui::Style().bold().fg(termui::Color::Cyan)));
+    dashboard.add_blank();
+    dashboard.add_line(termui::Text("System Status", termui::Style().underline()));
+    dashboard.add_blank();
     dashboard.add_line(termui::Text("  Service:   ", termui::Style(termui::Color::BrightBlack))
                            .add("Running", termui::Style(termui::Color::Green)));
     dashboard.add_line(termui::Text("  Uptime:    ", termui::Style(termui::Color::BrightBlack))
@@ -21,11 +21,11 @@ int main() {
 
     auto rebuild = [&](termui::Text result) {
         actions_page.clear();
-        actions_page.add_line(termui::Text("Actions Demo", termui::Style::bold(termui::Color::Yellow)));
-        actions_page.add_line(termui::Text(""));
+        actions_page.add_line(termui::Text("Actions Demo", termui::Style().bold().fg(termui::Color::Yellow)));
+        actions_page.add_blank();
         actions_page.add_line(termui::Text("Press Enter on an item:"));
-        actions_page.add_line(termui::Text(""));
-        actions_page.add_line(termui::Text(""));
+        actions_page.add_blank();
+        actions_page.add_blank();
         actions_page.add_line(result);
     };
 
@@ -41,7 +41,7 @@ int main() {
             rebuild(termui::Text("  Error: something went wrong!", termui::Style(termui::Color::Red)));
         })
         .add_item("Celebrate!", [&]() {
-            rebuild(termui::Text("  *** Great job! ***", termui::Style::bold(termui::Color::Cyan)));
+            rebuild(termui::Text("  *** Great job! ***", termui::Style().bold().fg(termui::Color::Cyan)));
         });
 
     rebuild(termui::Text("  (nothing selected yet)", termui::Style(termui::Color::BrightBlack)));
@@ -49,8 +49,8 @@ int main() {
 
     // ── Tab 3: Data — table display ─────────────────────────────
     auto& data = app.add_page("Data");
-    data.add_line(termui::Text("Sample Data Table", termui::Style::bold(termui::Color::Magenta)));
-    data.add_line(termui::Text(""));
+    data.add_line(termui::Text("Sample Data Table", termui::Style().bold().fg(termui::Color::Magenta)));
+    data.add_blank();
 
     termui::Table table;
     table.add_column("ID", 4)
@@ -66,15 +66,12 @@ int main() {
     table.add_row({"6",  "Frank",   "QA Lead",   "Active"});
     table.add_row({"7",  "Grace",   "Intern",    "Away"});
 
-    std::vector<termui::Text> table_lines = table.render();
-    for (size_t i = 0; i < table_lines.size(); ++i) {
-        data.add_line(table_lines[i]);
-    }
+    data.add_lines(table.render());
 
     // ── Tab 4: Scroll Test ────────────────────────────────────────
     auto& scroll = app.add_page("Scroll");
-    scroll.add_line(termui::Text("This page has many lines to test scrolling.", termui::Style::bold()));
-    scroll.add_line(termui::Text(""));
+    scroll.add_line(termui::Text("This page has many lines to test scrolling.", termui::Style().bold()));
+    scroll.add_blank();
     for (int i = 1; i <= 50; ++i) {
         termui::Color c;
         switch (i % 6) {
@@ -90,12 +87,12 @@ int main() {
 
     // ── Tab 5: About ────────────────────────────────────────────
     auto& about = app.add_page("About");
-    about.add_line(termui::Text("TermUI - Terminal GUI Framework", termui::Style::bold(termui::Color::Cyan)));
-    about.add_line(termui::Text(""));
+    about.add_line(termui::Text("TermUI - Terminal GUI Framework", termui::Style().bold().fg(termui::Color::Cyan)));
+    about.add_blank();
     about.add_line(termui::Text("Header-only, C++11, no dependencies."));
     about.add_line(termui::Text("Cross-platform: Linux, macOS, Windows."));
-    about.add_line(termui::Text(""));
-    about.add_line(termui::Text("Features:", termui::Style::underline()));
+    about.add_blank();
+    about.add_line(termui::Text("Features:", termui::Style().underline()));
     about.add_line(termui::Text("  - Tabbed pages with styled text"));
     about.add_line(termui::Text("  - Selectable lists with callbacks"));
     about.add_line(termui::Text("  - Formatted tables"));
@@ -115,13 +112,13 @@ int main() {
     // Seed the page with its initial content so it is non-empty before run().
     auto rebuild_live = [&]() {
         live.clear();
-        live.add_line(termui::Text("Live Update Demo", termui::Style::bold(termui::Color::Green)));
-        live.add_line(termui::Text(""));
+        live.add_line(termui::Text("Live Update Demo", termui::Style().bold().fg(termui::Color::Green)));
+        live.add_blank();
         live.add_line(termui::Text("Progress bar animates every ~100 ms:",
                                    termui::Style(termui::Color::BrightBlack)));
-        live.add_line(termui::Text(""));
+        live.add_blank();
         live.add_line(bar.render(30));
-        live.add_line(termui::Text(""));
+        live.add_blank();
 
         // Descriptive label that changes with progress.
         if (progress < 0.33)
@@ -131,7 +128,7 @@ int main() {
         else if (progress < 1.0)
             live.add_line(termui::Text("  Almost there!", termui::Style(termui::Color::BrightCyan)));
         else
-            live.add_line(termui::Text("  Complete!", termui::Style::bold(termui::Color::Green)));
+            live.add_line(termui::Text("  Complete!", termui::Style().bold().fg(termui::Color::Green)));
     };
 
     rebuild_live();

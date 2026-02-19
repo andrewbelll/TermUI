@@ -58,7 +58,7 @@ int main() {
     termui::App app;
 
     auto& page = app.add_page("Home");
-    page.add_line(termui::Text("Hello, world!", termui::Style::bold(termui::Color::Cyan)));
+    page.add_line(termui::Text("Hello, world!", termui::Style().bold().fg(termui::Color::Cyan)));
     page.add_line(termui::Text("Press q to quit."));
 
     app.run();
@@ -84,6 +84,65 @@ The demo (`termui_demo.cpp`) exercises every feature: styled text, a selectable 
 
 ---
 
+## Common Patterns
+
+### Key-value dashboard rows
+
+```cpp
+auto& page = app.add_page("Status");
+page.add_line(termui::Text("Service: ", termui::Color::BrightBlack)
+                  .add("Running", termui::Color::Green))
+    .add_line(termui::Text("Version: ", termui::Color::BrightBlack)
+                  .add("1.0.0"));
+```
+
+### Menu with per-item callbacks
+
+```cpp
+termui::SelectableList menu;
+menu.add_item("Start",   [&]() { /* ... */ })
+    .add_item("Stop",    [&]() { /* ... */ })
+    .add_item("Restart", [&]() { /* ... */ });
+page.set_list(menu);
+```
+
+### Live-updating content via `on_tick`
+
+```cpp
+int counter = 0;
+app.set_on_tick([&]() {
+    ++counter;
+    app.active_page().clear();
+    app.active_page().add_line("Tick count: " + std::to_string(counter));
+});
+```
+
+### Displaying a table
+
+```cpp
+termui::Table table;
+table.add_column("Name", 12).add_column("Status", 8);
+table.add_row({"Alice", "Active"}).add_row({"Bob", "Away"});
+page.add_blank().add_lines(table.render());
+```
+
+### Multi-select list
+
+```cpp
+termui::SelectableList list;
+list.set_multi_select(true);
+list.add_item("Option A").add_item("Option B").add_item("Option C");
+list.on_select([&](int, const std::string&) {
+    std::vector<std::string> chosen = list.get_selected_items();
+    // process chosen...
+});
+page.set_list(list);
+```
+
+Space toggles the checkbox on the highlighted row; Enter confirms. Call `list.get_selected_items()` to retrieve all checked items.
+
+---
+
 ## API Reference
 
 ### App
@@ -99,6 +158,7 @@ termui::App app("Title");  // optional title string (reserved for future use)
 |---|---|
 | `Page& add_page(const std::string& name)` | Creates a new tab with the given title and returns a reference to it. |
 | `Page& page(size_t index)` | Returns a reference to the page at `index`. |
+| `Page& active_page()` | Returns a reference to the currently visible page. Shorthand for `page(active_tab())`. |
 | `size_t page_count() const` | Returns the total number of pages. |
 | `size_t active_tab() const` | Returns the index of the currently visible tab. |
 | `void set_on_tick(std::function<void()> cb)` | Registers a callback invoked ~every 100 ms when no key is pressed. Use it to update page content for live/animated displays; `render()` is called automatically after each tick. |
@@ -120,8 +180,10 @@ auto& p = app.add_page("My Page");
 | `const std::string& title() const` | Returns the page title shown in the tab bar. |
 | `Page& add_line(const Text& line)` | Appends a styled `Text` line. Returns `*this` for chaining. |
 | `Page& add_line(const std::string& text)` | Appends a plain-text line. Returns `*this` for chaining. |
+| `Page& add_lines(const std::vector<Text>& lines)` | Appends each element of `lines`. Convenient for adding table output. Returns `*this` for chaining. |
+| `Page& add_blank()` | Appends an empty line (vertical spacing shorthand). Returns `*this` for chaining. |
 | `void clear()` | Removes all lines and resets the scroll position to 0. |
-| `void set_list(const SelectableList& list)` | Attaches a `SelectableList` to this page. List items are rendered after the static lines. |
+| `Page& set_list(const SelectableList& list)` | Attaches a `SelectableList` to this page. List items are rendered after the static lines. Returns `*this` for chaining. |
 | `bool has_list() const` | Returns `true` if a list has been set. |
 | `SelectableList& list()` | Returns a mutable reference to the attached list. |
 | `const SelectableList& list() const` | Returns a const reference to the attached list. |
@@ -148,6 +210,7 @@ termui::Text t3("label", termui::Style::bold());    // styled
 | Method | Description |
 |---|---|
 | `Text& add(const std::string& content, const Style& s = Style())` | Appends a span with the given style. Returns `*this` for chaining. |
+| `Text& add(const std::string& content, Color fg)` | Shorthand — appends a span colored with `fg`. Returns `*this` for chaining. |
 | `std::string render(int max_width = 0) const` | Returns the text as an ANSI escape sequence string. If `max_width > 0`, content is truncated to at most `max_width` display columns. |
 | `size_t length() const` | Returns the total display-column width (counts Unicode codepoints, not bytes). |
 
@@ -155,38 +218,32 @@ termui::Text t3("label", termui::Style::bold());    // styled
 
 ```cpp
 termui::Text line;
-line.add("Status: ", termui::Style(termui::Color::BrightBlack))
-    .add("OK",       termui::Style(termui::Color::Green));
+line.add("Status: ", termui::Color::BrightBlack)
+    .add("OK",       termui::Color::Green);
 ```
 
 #### Style
 
-Describes the visual appearance of a `TextSpan`.
+Describes the visual appearance of a `TextSpan`. Methods return a modified copy so they can be chained.
 
 ```cpp
-termui::Style s1;                              // default (no attributes)
-termui::Style s2(termui::Color::Red);          // foreground color only
-termui::Style s3 = termui::Style::bold();      // bold, default color
-termui::Style s4 = termui::Style::bold(termui::Color::Cyan); // bold cyan
+termui::Style s1;                                          // default (no attributes)
+termui::Style s2(termui::Color::Red);                      // foreground color only
+termui::Style s3 = termui::Style().bold();                 // bold, default color
+termui::Style s4 = termui::Style().bold().fg(termui::Color::Cyan);  // bold cyan
+termui::Style s5 = termui::Style().underline().fg(termui::Color::Yellow);
+termui::Style s6 = termui::Style().reversed();             // reverse video
 ```
 
-**Static builders** (return a new `Style`):
+**Chainable instance methods** (each returns a new `Style`):
 
-| Builder | Description |
+| Method | Description |
 |---|---|
-| `Style::bold(Color fg = Color::Default)` | Bold text, optional foreground color. |
-| `Style::underline(Color fg = Color::Default)` | Underlined text, optional foreground color. |
-| `Style::reverse()` | Reverse video (swap fg/bg). |
-
-**Data members** (read/write directly):
-
-| Member | Type | Description |
-|---|---|---|
-| `fg` | `Color` | Foreground color (default: `Color::Default`). |
-| `bg` | `Color` | Background color (default: `Color::Default`). |
-| `is_bold` | `bool` | Bold attribute. |
-| `is_underline` | `bool` | Underline attribute. |
-| `is_reverse` | `bool` | Reverse-video attribute. |
+| `Style bold() const` | Set bold attribute. |
+| `Style underline() const` | Set underline attribute. |
+| `Style reversed() const` | Set reverse-video attribute (swap fg/bg). |
+| `Style fg(Color c) const` | Set foreground color. |
+| `Style bg(Color c) const` | Set background color. |
 
 ---
 
@@ -230,12 +287,14 @@ page.set_list(list);
 |---|---|
 | `SelectableList& add_item(const std::string& item, std::function<void()> action = nullptr)` | Appends an item with an optional per-item action invoked on Enter. Returns `*this`. |
 | `SelectableList& on_select(std::function<void(int, const std::string&)> cb)` | Sets a global callback invoked on Enter for any item (receives index and text). Runs after the per-item action if both are set. Returns `*this`. |
+| `SelectableList& clear_items()` | Clears all items, resets cursor to 0, clears the `on_select` callback, and restores default styles. Returns `*this`. |
 | `SelectableList& normal_style(const Style& s)` | Style for non-cursor rows (default: no attributes). Returns `*this`. |
-| `SelectableList& cursor_style(const Style& s)` | Style for the cursor row (default: `Style::reverse()`). Returns `*this`. |
+| `SelectableList& cursor_style(const Style& s)` | Style for the cursor row (default: `Style().reversed()`). Returns `*this`. |
 | `int cursor() const` | Returns the current cursor index (0-based). |
 | `size_t size() const` | Returns the number of items. |
 | `bool empty() const` | Returns `true` when there are no items. |
 | `const std::string& selected_item() const` | Returns the text of the item at the cursor. |
+| `const std::string& get_item(int index) const` | Returns the item text at `index`, or an empty string if out of range. |
 | `bool handle_key(detail::Key key)` | Processes a key event; moves cursor or fires callback. Returns `true` if the key was consumed. |
 | `std::vector<Text> render(int width) const` | Renders all items as `Text` lines, truncated to `width` columns. Cursor row is prefixed with `> `, others with two spaces. |
 
@@ -255,8 +314,7 @@ table.add_row({"Alice", "Engineer", "Active"})
      .add_row({"Bob",   "Designer", "Away"});
 
 // Render and add to a page:
-for (auto& line : table.render())
-    page.add_line(line);
+page.add_lines(table.render());
 ```
 
 | Method | Description |

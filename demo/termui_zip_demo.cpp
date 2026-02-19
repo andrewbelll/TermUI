@@ -11,7 +11,7 @@ int main() {
     // Home tab
     termui::Page& home = app.add_page("Home");
     home.add_line(termui::Text("ZIP File Browser Demo",
-                               termui::Style::bold(termui::Color::Cyan)));
+                               termui::Style().bold().fg(termui::Color::Cyan)));
     home.add_line(termui::Text(""));
     home.add_line(termui::Text("How to use:"));
     home.add_line(termui::Text("  1. Switch to the Files tab (\xe2\x86\x92)"));
@@ -74,7 +74,7 @@ int main() {
         }
 
         zip_page->add_line(termui::Text("ZIP Contents",
-                                        termui::Style::bold(termui::Color::Cyan)));
+                                        termui::Style().bold().fg(termui::Color::Cyan)));
         zip_page->add_line(termui::Text("Source: " + path,
                                         termui::Style(termui::Color::BrightBlack)));
         zip_page->add_line(termui::Text(""));
@@ -109,7 +109,7 @@ int main() {
                 }
 
                 result_page->add_line(termui::Text("Selected Files",
-                                                   termui::Style::bold(termui::Color::Green)));
+                                                   termui::Style().bold().fg(termui::Color::Green)));
                 result_page->add_line(termui::Text(""));
                 if (sel.empty()) {
                     result_page->add_line(termui::Text(

@@ -39,46 +39,44 @@ enum class Color {
 };
 
 struct Style {
-    Color fg;
-    Color bg;
-    bool is_bold;
-    bool is_underline;
-    bool is_reverse;
-
     Style()
-        : fg(Color::Default), bg(Color::Default),
-          is_bold(false), is_underline(false), is_reverse(false) {}
+        : fg_(Color::Default), bg_(Color::Default),
+          is_bold_(false), is_underline_(false), is_reverse_(false) {}
 
     explicit Style(Color fg_color)
-        : fg(fg_color), bg(Color::Default),
-          is_bold(false), is_underline(false), is_reverse(false) {}
+        : fg_(fg_color), bg_(Color::Default),
+          is_bold_(false), is_underline_(false), is_reverse_(false) {}
 
-    static Style bold(Color fg = Color::Default) {
-        Style s; s.fg = fg; s.is_bold = true; return s;
-    }
-    static Style underline(Color fg = Color::Default) {
-        Style s; s.fg = fg; s.is_underline = true; return s;
-    }
-    static Style reverse() {
-        Style s; s.is_reverse = true; return s;
-    }
+    // Chainable instance methods — each returns a modified copy.
+    Style bold()      const { Style s = *this; s.is_bold_      = true; return s; }
+    Style underline() const { Style s = *this; s.is_underline_ = true; return s; }
+    Style reversed()  const { Style s = *this; s.is_reverse_   = true; return s; }
+    Style fg(Color c) const { Style s = *this; s.fg_ = c; return s; }
+    Style bg(Color c) const { Style s = *this; s.bg_ = c; return s; }
 
     std::string begin() const {
         std::string seq;
         seq.reserve(16);
         seq = "\033[0";
-        if (is_bold)      seq += ";1";
-        if (is_underline) seq += ";4";
-        if (is_reverse)   seq += ";7";
-        if (fg != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg));
+        if (is_bold_)      seq += ";1";
+        if (is_underline_) seq += ";4";
+        if (is_reverse_)   seq += ";7";
+        if (fg_ != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg_));
         // ANSI background codes are foreground + 10: standard 30-37 → 40-47,
         // bright 90-97 → 100-107.  The +10 offset holds for both ranges.
-        if (bg != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg) + 10);
+        if (bg_ != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg_) + 10);
         seq += "m";
         return seq;
     }
 
     static std::string reset() { return "\033[0m"; }
+
+private:
+    Color fg_;
+    Color bg_;
+    bool  is_bold_;
+    bool  is_underline_;
+    bool  is_reverse_;
 };
 
 // ─── Internal UTF-8 Helper ──────────────────────────────────────────────────
@@ -153,6 +151,10 @@ public:
         return *this;
     }
 
+    Text& add(const std::string& content, Color fg) {
+        return add(content, Style(fg));
+    }
+
     // Renders the text to an ANSI escape sequence string.
     // If max_width > 0, content is truncated to at most max_width display columns.
     std::string render(int max_width = 0) const {
@@ -203,8 +205,7 @@ public:
     };
 
     Table() {
-        header_style_.is_bold = true;
-        header_style_.is_underline = true;
+        header_style_ = Style().bold().underline();
     }
 
     Table& add_column(const std::string& name, int width = 0) {
@@ -360,7 +361,7 @@ public:
         if (!filled_chars.empty()) t.add(filled_chars, Style(fill_));
         if (!empty_chars.empty())  t.add(empty_chars,  Style(empty_));
         t.add("] ", Style(Color::BrightBlack));
-        t.add(std::to_string(pct) + "%", Style::bold());
+        t.add(std::to_string(pct) + "%", Style().bold());
         return t;
     }
 
@@ -588,7 +589,7 @@ inline void show_cursor() { write_raw("\033[?25h"); }
 class SelectableList {
 public:
     SelectableList()
-        : cursor_(0), cursor_style_(Style::reverse()), multi_select_(false) {}
+        : cursor_(0), cursor_style_(Style().reversed()), multi_select_(false) {}
 
     SelectableList& add_item(const std::string& item,
                              std::function<void()> action = nullptr) {
@@ -609,6 +610,25 @@ public:
     int cursor() const { return cursor_; }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
+
+    // Returns the item text at index, or an empty string if out of range.
+    const std::string& get_item(int index) const {
+        static const std::string empty_str;
+        if (index < 0 || static_cast<size_t>(index) >= items_.size()) return empty_str;
+        return items_[static_cast<size_t>(index)];
+    }
+
+    // Clears all items, resets cursor and selection, and restores default styles.
+    SelectableList& clear_items() {
+        items_.clear();
+        actions_.clear();
+        selected_.clear();
+        cursor_ = 0;
+        on_select_ = nullptr;
+        normal_style_ = Style();
+        cursor_style_ = Style().reversed();
+        return *this;
+    }
 
     const std::string& selected_item() const {
         static const std::string empty;
@@ -726,12 +746,23 @@ public:
         return *this;
     }
 
+    Page& add_lines(const std::vector<Text>& lines) {
+        for (const Text& line : lines) lines_.push_back(line);
+        return *this;
+    }
+
+    Page& add_blank() {
+        lines_.push_back(Text(""));
+        return *this;
+    }
+
     // Removes all static lines and resets the scroll position to 0.
     void clear() { lines_.clear(); scroll_ = 0; }
 
-    void set_list(const SelectableList& list) {
+    Page& set_list(const SelectableList& list) {
         list_ = list;
         has_list_ = true;
+        return *this;
     }
 
     bool has_list() const { return has_list_; }
@@ -788,6 +819,7 @@ public:
         assert(index < pages_.size() && "App::page index out of range");
         return pages_[index];
     }
+    Page& active_page() { return pages_[active_tab_]; }
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
 
@@ -1116,7 +1148,7 @@ private:
             current_path_.pop_back();
 
         page_->clear();
-        page_->add_line(Text("File Browser", Style::bold(Color::Cyan)));
+        page_->add_line(Text("File Browser", Style().bold().fg(Color::Cyan)));
         page_->add_line(Text("Path: " + current_path_, Style(Color::BrightBlack)));
         page_->add_line(Text(""));
         if (!selected_file_.empty())
