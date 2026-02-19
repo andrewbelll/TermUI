@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Plan Mode
+- Make the plan extremely concise. Sacrifice grammer for the sake of concision.
+- At the end of each plan, give me a list of unresolved questions to answer, if any.
+
 ## Project Identity
 
 - **Name**: TermUI
@@ -13,21 +17,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 /home/bell/Dev/
 ├── termui.hpp          # Entire library (single header, ~800 lines)
-├── termui_demo.cpp     # Demo: 5 tabs covering all features
-├── CMakeLists.txt      # C++11, produces ./build/demo
 ├── README.md           # Full docs: install, quick-start, API reference
 ├── CLAUDE.md           # This file
-├── .gitignore          # Excludes build/
-└── build/
-    └── demo            # Compiled binary
+├── LICENSE
+├── .gitignore          # Excludes demo/build/
+└── demo/
+    ├── CMakeLists.txt  # C++11, produces demo and zip_demo
+    ├── termui_demo.cpp # Demo: 5 tabs covering all features
+    ├── termui_zip_demo.cpp
+    └── build/
+        └── demo        # Compiled binary
 ```
 
 ## Build Commands
 
 ```bash
-cmake -B build          # Configure (from project root)
-cmake --build build     # Build
-./build/demo            # Run the demo
+cmake -B demo/build demo    # Configure
+cmake --build demo/build    # Build
+./demo/build/demo           # Run the demo
 ```
 
 ## Architecture

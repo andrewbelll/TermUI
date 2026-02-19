@@ -22,6 +22,8 @@
 #  include <unistd.h>
 #  include <termios.h>
 #  include <sys/ioctl.h>
+#  include <dirent.h>
+#  include <sys/stat.h>
 #endif
 
 namespace termui {
@@ -37,46 +39,44 @@ enum class Color {
 };
 
 struct Style {
-    Color fg;
-    Color bg;
-    bool is_bold;
-    bool is_underline;
-    bool is_reverse;
-
     Style()
-        : fg(Color::Default), bg(Color::Default),
-          is_bold(false), is_underline(false), is_reverse(false) {}
+        : fg_(Color::Default), bg_(Color::Default),
+          is_bold_(false), is_underline_(false), is_reverse_(false) {}
 
     explicit Style(Color fg_color)
-        : fg(fg_color), bg(Color::Default),
-          is_bold(false), is_underline(false), is_reverse(false) {}
+        : fg_(fg_color), bg_(Color::Default),
+          is_bold_(false), is_underline_(false), is_reverse_(false) {}
 
-    static Style bold(Color fg = Color::Default) {
-        Style s; s.fg = fg; s.is_bold = true; return s;
-    }
-    static Style underline(Color fg = Color::Default) {
-        Style s; s.fg = fg; s.is_underline = true; return s;
-    }
-    static Style reverse() {
-        Style s; s.is_reverse = true; return s;
-    }
+    // Chainable instance methods — each returns a modified copy.
+    Style bold()      const { Style s = *this; s.is_bold_      = true; return s; }
+    Style underline() const { Style s = *this; s.is_underline_ = true; return s; }
+    Style reversed()  const { Style s = *this; s.is_reverse_   = true; return s; }
+    Style fg(Color c) const { Style s = *this; s.fg_ = c; return s; }
+    Style bg(Color c) const { Style s = *this; s.bg_ = c; return s; }
 
     std::string begin() const {
         std::string seq;
         seq.reserve(16);
         seq = "\033[0";
-        if (is_bold)      seq += ";1";
-        if (is_underline) seq += ";4";
-        if (is_reverse)   seq += ";7";
-        if (fg != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg));
+        if (is_bold_)      seq += ";1";
+        if (is_underline_) seq += ";4";
+        if (is_reverse_)   seq += ";7";
+        if (fg_ != Color::Default) seq += ";" + std::to_string(static_cast<int>(fg_));
         // ANSI background codes are foreground + 10: standard 30-37 → 40-47,
         // bright 90-97 → 100-107.  The +10 offset holds for both ranges.
-        if (bg != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg) + 10);
+        if (bg_ != Color::Default) seq += ";" + std::to_string(static_cast<int>(bg_) + 10);
         seq += "m";
         return seq;
     }
 
     static std::string reset() { return "\033[0m"; }
+
+private:
+    Color fg_;
+    Color bg_;
+    bool  is_bold_;
+    bool  is_underline_;
+    bool  is_reverse_;
 };
 
 // ─── Internal UTF-8 Helper ──────────────────────────────────────────────────
@@ -151,6 +151,10 @@ public:
         return *this;
     }
 
+    Text& add(const std::string& content, Color fg) {
+        return add(content, Style(fg));
+    }
+
     // Renders the text to an ANSI escape sequence string.
     // If max_width > 0, content is truncated to at most max_width display columns.
     std::string render(int max_width = 0) const {
@@ -201,8 +205,7 @@ public:
     };
 
     Table() {
-        header_style_.is_bold = true;
-        header_style_.is_underline = true;
+        header_style_ = Style().bold().underline();
     }
 
     Table& add_column(const std::string& name, int width = 0) {
@@ -358,7 +361,7 @@ public:
         if (!filled_chars.empty()) t.add(filled_chars, Style(fill_));
         if (!empty_chars.empty())  t.add(empty_chars,  Style(empty_));
         t.add("] ", Style(Color::BrightBlack));
-        t.add(std::to_string(pct) + "%", Style::bold());
+        t.add(std::to_string(pct) + "%", Style().bold());
         return t;
     }
 
@@ -383,6 +386,7 @@ enum Key {
     KEY_UP,
     KEY_DOWN,
     KEY_ENTER,
+    KEY_SPACE,
     KEY_RESIZE,
     KEY_OTHER
 };
@@ -450,6 +454,7 @@ inline Key read_key() {
             case VK_RIGHT: return KEY_RIGHT;
             case VK_UP:    return KEY_UP;
             case VK_DOWN:  return KEY_DOWN;
+            case VK_SPACE: return KEY_SPACE;
         }
         if (wch != 0) return KEY_OTHER;
     }
@@ -517,6 +522,7 @@ inline Key read_key() {
     if (c == '\r')                 return KEY_ENTER;   // CR
     if (c == 'q' || c == 'Q')     return KEY_QUIT;
     if (c == '\x03')               return KEY_CTRL_C;  // ETX / Ctrl+C
+    if (c == ' ')                  return KEY_SPACE;
 
     if (c == 27) { // ESC sequence
         unsigned char seq[2];
@@ -583,12 +589,13 @@ inline void show_cursor() { write_raw("\033[?25h"); }
 class SelectableList {
 public:
     SelectableList()
-        : cursor_(0), cursor_style_(Style::reverse()) {}
+        : cursor_(0), cursor_style_(Style().reversed()), multi_select_(false) {}
 
     SelectableList& add_item(const std::string& item,
                              std::function<void()> action = nullptr) {
         items_.push_back(item);
         actions_.push_back(std::move(action));
+        selected_.push_back(false);
         return *this;
     }
 
@@ -604,10 +611,44 @@ public:
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
 
+    // Returns the item text at index, or an empty string if out of range.
+    const std::string& get_item(int index) const {
+        static const std::string empty_str;
+        if (index < 0 || static_cast<size_t>(index) >= items_.size()) return empty_str;
+        return items_[static_cast<size_t>(index)];
+    }
+
+    // Clears all items, resets cursor and selection, and restores default styles.
+    SelectableList& clear_items() {
+        items_.clear();
+        actions_.clear();
+        selected_.clear();
+        cursor_ = 0;
+        on_select_ = nullptr;
+        normal_style_ = Style();
+        cursor_style_ = Style().reversed();
+        return *this;
+    }
+
     const std::string& selected_item() const {
         static const std::string empty;
         if (items_.empty()) return empty;
         return items_[static_cast<size_t>(cursor_)];
+    }
+
+    SelectableList& set_multi_select(bool enabled) { multi_select_ = enabled; return *this; }
+    bool is_multi_select() const { return multi_select_; }
+
+    std::vector<std::string> get_selected_items() const {
+        std::vector<std::string> result;
+        for (size_t i = 0; i < items_.size(); ++i)
+            if (i < selected_.size() && selected_[i])
+                result.push_back(items_[i]);
+        return result;
+    }
+
+    void clear_selection() {
+        for (size_t i = 0; i < selected_.size(); ++i) selected_[i] = false;
     }
 
     bool handle_key(detail::Key key) {
@@ -625,6 +666,13 @@ public:
             if (on_select_)
                 on_select_(cursor_, items_[static_cast<size_t>(cursor_)]);
             return true;
+        case detail::KEY_SPACE:
+            if (multi_select_) {
+                const size_t idx = static_cast<size_t>(cursor_);
+                if (idx < selected_.size()) selected_[idx] = !selected_[idx];
+                return true;
+            }
+            return false;
         default:
             return false;
         }
@@ -636,6 +684,25 @@ public:
         for (size_t i = 0; i < items_.size(); ++i) {
             const bool is_cursor = (static_cast<int>(i) == cursor_);
             const Style& st = is_cursor ? cursor_style_ : normal_style_;
+
+            if (multi_select_) {
+                const bool checked = (i < selected_.size()) && selected_[i];
+                std::string cursor_mark = is_cursor ? "> " : "  ";
+                std::string checkbox    = checked   ? "[x] " : "[ ] ";
+                std::string item_text   = items_[i];
+                const int prefix_width = 6; // "> " (2) + "[x] " (4)
+                if (width > prefix_width) {
+                    int avail = width - prefix_width;
+                    if (static_cast<int>(utf8_display_width(item_text)) > avail)
+                        item_text = utf8_truncate(item_text, static_cast<size_t>(avail));
+                }
+                Text line;
+                line.add(cursor_mark, st);
+                line.add(checkbox, Style(Color::BrightBlack));
+                line.add(item_text, st);
+                lines.push_back(line);
+                continue;
+            }
 
             std::string content = is_cursor ? "> " : "  ";
             content += items_[i];
@@ -652,7 +719,9 @@ public:
 private:
     std::vector<std::string>           items_;
     std::vector<std::function<void()>> actions_;
+    std::vector<bool>                  selected_;
     int cursor_;
+    bool multi_select_;
     std::function<void(int, const std::string&)> on_select_;
     Style normal_style_;
     Style cursor_style_;
@@ -677,12 +746,23 @@ public:
         return *this;
     }
 
+    Page& add_lines(const std::vector<Text>& lines) {
+        for (const Text& line : lines) lines_.push_back(line);
+        return *this;
+    }
+
+    Page& add_blank() {
+        lines_.push_back(Text(""));
+        return *this;
+    }
+
     // Removes all static lines and resets the scroll position to 0.
     void clear() { lines_.clear(); scroll_ = 0; }
 
-    void set_list(const SelectableList& list) {
+    Page& set_list(const SelectableList& list) {
         list_ = list;
         has_list_ = true;
+        return *this;
     }
 
     bool has_list() const { return has_list_; }
@@ -739,8 +819,13 @@ public:
         assert(index < pages_.size() && "App::page index out of range");
         return pages_[index];
     }
+    Page& active_page() { return pages_[active_tab_]; }
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
+
+    void set_active_tab(size_t index) {
+        if (index < pages_.size()) active_tab_ = index;
+    }
 
     void run() {
         if (pages_.empty()) return;
@@ -930,9 +1015,14 @@ private:
         buf += std::to_string(H - 1);
         buf += ";1H";
 
-        const char* status_hint = p.has_list()
-            ? " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose "
-            : " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
+        const char* status_hint;
+        if (p.has_list() && p.list().is_multi_select())
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs"
+                          "  [\xe2\x86\x91\xe2\x86\x93] select  [Space] toggle  [Enter] confirm ";
+        else if (p.has_list())
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose ";
+        else
+            status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
 
         std::string scroll_hint;
         if (total > content_rows) {
@@ -962,6 +1052,132 @@ private:
         buf += "\033[J"; // clear from cursor to end of screen
 
         detail::write_raw(buf);
+    }
+};
+
+// ─── FileBrowser ─────────────────────────────────────────────────────────────
+
+// A reusable file browser widget that occupies its own tab in an App.
+// The user can navigate directories with UP/DOWN/ENTER; selecting a file
+// fires on_file_selected() and updates the "Selected:" header line.
+//
+// Lifetime requirement: the FileBrowser instance must outlive app.run(),
+// because SelectableList item lambdas capture `this`.
+class FileBrowser {
+public:
+    explicit FileBrowser(const std::string& start_path = ".")
+        : current_path_(start_path), page_(nullptr) {
+        while (current_path_.size() > 1 && current_path_.back() == '/')
+            current_path_.pop_back();
+    }
+
+    // Callback fired when a file (not a directory) is confirmed; receives the full path.
+    FileBrowser& on_file_selected(std::function<void(const std::string&)> cb) {
+        on_file_selected_ = std::move(cb);
+        return *this;
+    }
+
+    // Full path of the last selected file; empty if nothing has been selected yet.
+    const std::string& selected_file() const { return selected_file_; }
+
+    // Add a tab named tab_name to app, seed its content, and return the Page&.
+    Page& attach(App& app, const std::string& tab_name = "Files") {
+        Page& p = app.add_page(tab_name);
+        page_ = &p;
+        navigate_to(current_path_);
+        return p;
+    }
+
+private:
+    struct Entry { std::string name; bool is_dir; };
+
+    std::string current_path_;
+    std::string selected_file_;
+    std::function<void(const std::string&)> on_file_selected_;
+    Page* page_; // raw ptr safe: deque never invalidates existing elements
+
+    // Returns the parent directory of path (which must have no trailing slash).
+    static std::string parent_path(const std::string& path) {
+        size_t pos = path.rfind('/');
+        if (pos == std::string::npos) return "."; // relative path, no separator
+        if (pos == 0)                return "/";  // e.g. parent of "/foo" is "/"
+        return path.substr(0, pos);
+    }
+
+    std::vector<Entry> list_directory(const std::string& path) const {
+        std::vector<Entry> entries;
+#ifdef _WIN32
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA((path + "\\*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return entries;
+        do {
+            std::string name = fd.cFileName;
+            if (name == "." || name == "..") continue;
+            bool is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            entries.push_back({name, is_dir});
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+#else
+        DIR* dir = opendir(path.c_str());
+        if (!dir) return entries;
+        struct dirent* ent;
+        while ((ent = readdir(dir)) != nullptr) {
+            std::string name = ent->d_name;
+            if (name[0] == '.') continue; // skip ., .., and hidden entries
+            std::string full = path + "/" + name;
+            struct stat st;
+            bool is_dir = false;
+            if (stat(full.c_str(), &st) == 0)
+                is_dir = S_ISDIR(st.st_mode);
+            entries.push_back({name, is_dir});
+        }
+        closedir(dir);
+#endif
+        // Directories first, then files; alphabetical within each group.
+        std::sort(entries.begin(), entries.end(),
+                  [](const Entry& a, const Entry& b) {
+                      if (a.is_dir != b.is_dir) return a.is_dir && !b.is_dir;
+                      return a.name < b.name;
+                  });
+        return entries;
+    }
+
+    void navigate_to(const std::string& path) {
+        current_path_ = path;
+        while (current_path_.size() > 1 && current_path_.back() == '/')
+            current_path_.pop_back();
+
+        page_->clear();
+        page_->add_line(Text("File Browser", Style().bold().fg(Color::Cyan)));
+        page_->add_line(Text("Path: " + current_path_, Style(Color::BrightBlack)));
+        page_->add_line(Text(""));
+        if (!selected_file_.empty())
+            page_->add_line(Text("Selected: ").add(selected_file_, Style(Color::Green)));
+
+        std::vector<Entry> entries = list_directory(current_path_);
+        SelectableList lst;
+
+        const std::string parent = parent_path(current_path_);
+        lst.add_item("../", [this, parent]() { navigate_to(parent); });
+
+        for (const Entry& e : entries) {
+            if (e.is_dir) {
+                std::string dir_path = current_path_ + "/" + e.name;
+                lst.add_item(e.name + "/", [this, dir_path]() { navigate_to(dir_path); });
+            }
+        }
+        for (const Entry& e : entries) {
+            if (!e.is_dir) {
+                std::string file_path = current_path_ + "/" + e.name;
+                lst.add_item(e.name, [this, file_path]() {
+                    selected_file_ = file_path;
+                    if (on_file_selected_) on_file_selected_(selected_file_);
+                    navigate_to(current_path_);
+                });
+            }
+        }
+
+        page_->set_list(lst);
     }
 };
 
