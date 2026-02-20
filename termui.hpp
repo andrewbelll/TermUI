@@ -1,6 +1,11 @@
 #ifndef TERMUI_HPP
 #define TERMUI_HPP
 
+#define TERMUI_VERSION_MAJOR 1
+#define TERMUI_VERSION_MINOR 0
+#define TERMUI_VERSION_PATCH 0
+#define TERMUI_VERSION "1.0.0"
+
 #include <string>
 #include <vector>
 #include <deque>
