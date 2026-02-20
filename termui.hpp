@@ -11,6 +11,7 @@
 #include <cstring>
 #include <csignal>
 #include <cassert>
+#include <cerrno>
 
 #ifdef _WIN32
 #  ifndef NOMINMAX
@@ -24,6 +25,7 @@
 #  include <sys/ioctl.h>
 #  include <dirent.h>
 #  include <sys/stat.h>
+#  include <poll.h>
 #endif
 
 namespace termui {
@@ -35,7 +37,10 @@ enum class Color {
     Black = 30, Red = 31, Green = 32, Yellow = 33,
     Blue = 34, Magenta = 35, Cyan = 36, White = 37,
     BrightBlack = 90, BrightRed = 91, BrightGreen = 92, BrightYellow = 93,
-    BrightBlue = 94, BrightMagenta = 95, BrightCyan = 96, BrightWhite = 97
+    BrightBlue = 94, BrightMagenta = 95, BrightCyan = 96, BrightWhite = 97,
+    // Sentinel: total number of named colors (not an ANSI code).
+    // Update this value if new colors are added.
+    COLOR_COUNT = 18
 };
 
 struct Style {
@@ -138,11 +143,16 @@ struct TextSpan {
     TextSpan() = default;
     explicit TextSpan(const std::string& text) : content(text), style() {}
     TextSpan(const std::string& text, const Style& s) : content(text), style(s) {}
+    TextSpan(std::string&& text, const Style& s) : content(std::move(text)), style(s) {}
 };
 
 class Text {
 public:
     Text() = default;
+    Text(const Text&) = default;
+    Text& operator=(const Text&) = default;
+    Text(Text&&) noexcept = default;
+    Text& operator=(Text&&) noexcept = default;
     explicit Text(const std::string& content) { spans_.push_back(TextSpan(content)); }
     Text(const std::string& content, const Style& s) { spans_.push_back(TextSpan(content, s)); }
     Text(const std::string& content, Color fg) { spans_.push_back(TextSpan(content, Style(fg))); }
@@ -154,6 +164,15 @@ public:
 
     Text& add(const std::string& content, Color fg) {
         return add(content, Style(fg));
+    }
+
+    Text& add(std::string&& content, const Style& s = Style()) {
+        spans_.push_back(TextSpan(std::move(content), s));
+        return *this;
+    }
+
+    Text& add(std::string&& content, Color fg) {
+        return add(std::move(content), Style(fg));
     }
 
     // Renders the text to an ANSI escape sequence string.
@@ -208,6 +227,10 @@ public:
     Table() {
         header_style_ = Style().bold().underline();
     }
+    Table(const Table&) = default;
+    Table& operator=(const Table&) = default;
+    Table(Table&&) noexcept = default;
+    Table& operator=(Table&&) noexcept = default;
 
     Table& add_column(const std::string& name, int width = 0) {
         columns_.push_back(Column(name, width));
@@ -226,15 +249,15 @@ public:
         if (columns_.empty()) return result;
 
         // Determine column widths (fixed or auto-sized to content).
-        std::vector<int> widths(columns_.size(), 0);
+        std::vector<size_t> widths(columns_.size(), 0);
         for (size_t c = 0; c < columns_.size(); ++c) {
             if (columns_[c].width > 0) {
-                widths[c] = columns_[c].width;
+                widths[c] = static_cast<size_t>(columns_[c].width);
             } else {
-                widths[c] = static_cast<int>(utf8_display_width(columns_[c].name));
+                widths[c] = utf8_display_width(columns_[c].name);
                 for (size_t r = 0; r < rows_.size(); ++r) {
                     if (c < rows_[r].size()) {
-                        int cell_w = static_cast<int>(utf8_display_width(rows_[r][c]));
+                        size_t cell_w = utf8_display_width(rows_[r][c]);
                         if (cell_w > widths[c]) widths[c] = cell_w;
                     }
                 }
@@ -243,15 +266,15 @@ public:
 
         // Scale columns proportionally when a width limit is given.
         if (available_width > 0) {
-            int total = 0;
+            size_t total = 0;
             int separators = static_cast<int>(columns_.size()) - 1;
             for (size_t c = 0; c < widths.size(); ++c) total += widths[c];
             int usable = available_width - separators * 3; // " | " between cols
-            if (usable > 0 && total > usable) {
+            if (usable > 0 && total > static_cast<size_t>(usable)) {
                 // Round-half-up to minimise cumulative truncation error.
                 for (size_t c = 0; c < widths.size(); ++c)
-                    widths[c] = std::max(1, static_cast<int>(
-                        (static_cast<long long>(widths[c]) * usable + total / 2) / total));
+                    widths[c] = static_cast<size_t>(std::max(static_cast<size_t>(1),
+                        (widths[c] * static_cast<size_t>(usable) + total / 2) / total));
             }
         }
 
@@ -259,7 +282,7 @@ public:
         Text header;
         for (size_t c = 0; c < columns_.size(); ++c) {
             if (c > 0) header.add(" \xe2\x94\x82 ", Style(Color::BrightBlack));
-            header.add(pad_or_truncate(columns_[c].name, widths[c]), header_style_);
+            header.add(pad_or_truncate(columns_[c].name, static_cast<int>(widths[c])), header_style_);
         }
         result.push_back(header);
 
@@ -269,8 +292,8 @@ public:
             if (c > 0) sep.add("\xe2\x94\x80\xe2\x94\xbc\xe2\x94\x80", Style(Color::BrightBlack));
             // Build a run of horizontal-rule characters (3 bytes each).
             std::string dash;
-            dash.reserve(static_cast<size_t>(widths[c]) * 3);
-            for (int i = 0; i < widths[c]; ++i) dash += "\xe2\x94\x80";
+            dash.reserve(widths[c] * 3);
+            for (size_t i = 0; i < widths[c]; ++i) dash += "\xe2\x94\x80";
             sep.add(dash, Style(Color::BrightBlack));
         }
         result.push_back(sep);
@@ -281,7 +304,7 @@ public:
             for (size_t c = 0; c < columns_.size(); ++c) {
                 if (c > 0) row.add(" \xe2\x94\x82 ", Style(Color::BrightBlack));
                 const std::string& cell = (c < rows_[r].size()) ? rows_[r][c] : empty_str();
-                row.add(pad_or_truncate(cell, widths[c]));
+                row.add(pad_or_truncate(cell, static_cast<int>(widths[c])));
             }
             result.push_back(row);
         }
@@ -526,9 +549,23 @@ inline Key read_key() {
     if (c == ' ')                  return KEY_SPACE;
 
     if (c == 27) { // ESC sequence
+        // Wait up to timeout_ms for a byte on stdin; returns true if a byte arrived.
+        // Uses poll() rather than relying solely on VTIME so partial escape sequences
+        // do not block indefinitely.
+        struct PollRead {
+            static bool read_byte(unsigned char& byte, int timeout_ms) {
+                struct pollfd pfd;
+                pfd.fd      = STDIN_FILENO;
+                pfd.events  = POLLIN;
+                pfd.revents = 0;
+                int r = ::poll(&pfd, 1, timeout_ms);
+                if (r <= 0 || !(pfd.revents & POLLIN)) return false;
+                return ::read(STDIN_FILENO, &byte, 1) == 1;
+            }
+        };
         unsigned char seq[2];
-        if (read(STDIN_FILENO, &seq[0], 1) <= 0) return KEY_OTHER;
-        if (read(STDIN_FILENO, &seq[1], 1) <= 0) return KEY_OTHER;
+        if (!PollRead::read_byte(seq[0], 50)) return KEY_OTHER;
+        if (!PollRead::read_byte(seq[1], 50)) return KEY_OTHER;
         if (seq[0] == '[') {
             // Single-letter final byte: standard cursor-movement sequences.
             switch (seq[1]) {
@@ -541,11 +578,9 @@ inline Key read_key() {
             // terminates the sequence so stale bytes don't pollute the next
             // read_key() call.
             if (seq[1] >= '0' && seq[1] <= '9') {
-                // Drain until a letter terminates the sequence; cap at 32 bytes
-                // to prevent an indefinite loop on malformed or adversarial input.
                 int limit = 32;
                 unsigned char drain;
-                while (limit-- > 0 && read(STDIN_FILENO, &drain, 1) > 0) {
+                while (limit-- > 0 && PollRead::read_byte(drain, 50)) {
                     if ((drain >= 'A' && drain <= 'Z') ||
                         (drain >= 'a' && drain <= 'z')) break;
                 }
@@ -569,9 +604,17 @@ inline void write_raw(const std::string& s) {
     size_t remaining = s.size();
     while (remaining > 0) {
         ssize_t n = ::write(STDOUT_FILENO, ptr, remaining);
-        if (n <= 0) break; // terminal closed or unrecoverable error
-        ptr       += static_cast<size_t>(n);
-        remaining -= static_cast<size_t>(n);
+        if (n > 0) {
+            ptr       += static_cast<size_t>(n);
+            remaining -= static_cast<size_t>(n);
+        } else if (n < 0 && errno == EINTR) {
+            continue; // interrupted by signal; retry
+        } else {
+            // Unrecoverable error (ENOSPC, EIO, EPIPE, etc.).
+            // Attempt terminal restore before abandoning the write.
+            exit_raw_mode();
+            break;
+        }
     }
 #endif
 }
@@ -591,6 +634,10 @@ class SelectableList {
 public:
     SelectableList()
         : cursor_(0), cursor_style_(Style().reversed()), multi_select_(false) {}
+    SelectableList(const SelectableList&) = default;
+    SelectableList& operator=(const SelectableList&) = default;
+    SelectableList(SelectableList&&) noexcept = default;
+    SelectableList& operator=(SelectableList&&) noexcept = default;
 
     SelectableList& add_item(const std::string& item,
                              std::function<void()> action = nullptr) {
@@ -620,6 +667,10 @@ public:
     int cursor() const { return cursor_; }
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }
+
+    // Returns true when the list is non-empty and a valid selection exists.
+    // Check this before calling selected_item() to avoid relying on the empty sentinel.
+    bool has_selection() const { return !items_.empty(); }
 
     // Returns the item text at index, or an empty string if out of range.
     const std::string& get_item(int index) const {
@@ -743,6 +794,10 @@ class Page {
 public:
     explicit Page(const std::string& title)
         : title_(title), scroll_(0), has_list_(false), list_() {}
+    Page(const Page&) = default;
+    Page& operator=(const Page&) = default;
+    Page(Page&&) noexcept = default;
+    Page& operator=(Page&&) noexcept = default;
 
     const std::string& title() const { return title_; }
 
@@ -776,8 +831,17 @@ public:
     // Removes all static lines and resets the scroll position to 0.
     Page& clear() { lines_.clear(); scroll_ = 0; return *this; }
 
+    // Copies list into this Page. The caller's SelectableList may be destroyed
+    // freely after this call — Page owns its own copy.
     Page& set_list(const SelectableList& list) {
         list_ = list;
+        has_list_ = true;
+        return *this;
+    }
+
+    // Move overload — avoids a copy when passing a temporary or local.
+    Page& set_list(SelectableList&& list) {
+        list_ = std::move(list);
         has_list_ = true;
         return *this;
     }
@@ -957,7 +1021,18 @@ private:
         const detail::TermSize ts = detail::get_terminal_size();
         const int W = ts.cols;
         const int H = ts.rows;
-        if (W < 10 || H < 5) return;
+
+        // Minimum usable terminal dimensions.
+        const int MIN_COLS = 10;
+        const int MIN_ROWS = 5;
+        if (W < MIN_COLS || H < MIN_ROWS) return;
+
+        // Border layout: │<sp><content><sp>│
+        // Left border(1) + leading space(1) + right border(1) = 3 overhead cols.
+        // Top border row + content rows + bottom border row = H; status embedded in bottom.
+        const int BORDER_OVERHEAD = 3;
+        const int CONTENT_WIDTH   = W - BORDER_OVERHEAD;   // display cols for text
+        const int BLANK_FILL      = W - 2;                 // spaces for empty rows (no borders counted)
 
         std::string buf;
         buf.reserve(static_cast<size_t>(W * H) * 8);
@@ -987,14 +1062,14 @@ private:
 
         // Advance tab_offset_ until active_tab_ is within the visible window.
         while (true) {
-            const int budget = W - 3 - (tab_offset_ > 0 ? 2 : 0);
+            const int budget = CONTENT_WIDTH - (tab_offset_ > 0 ? 2 : 0);
             const size_t lv = compute_last_visible(tab_offset_, budget);
             if (active_tab_ <= lv) break;
             ++tab_offset_;
         }
 
         // Final visible range for rendering.
-        const int tab_budget = W - 3 - (tab_offset_ > 0 ? 2 : 0);
+        const int tab_budget = CONTENT_WIDTH - (tab_offset_ > 0 ? 2 : 0);
         const size_t last_visible = compute_last_visible(tab_offset_, tab_budget);
 
         // Build tab bar string.
@@ -1025,7 +1100,7 @@ private:
         // Top border: corner + dash + tab bar + remaining dashes + corner.
         buf += "\033[90m\xe2\x94\x8c\xe2\x94\x80\033[0m";
         buf += tab_str;
-        int remaining = W - 3 - static_cast<int>(tab_plain_len);
+        int remaining = CONTENT_WIDTH - static_cast<int>(tab_plain_len);
         if (remaining > 0) {
             buf += "\033[90m";
             for (int i = 0; i < remaining; ++i) buf += "\xe2\x94\x80";
@@ -1034,7 +1109,7 @@ private:
         buf += "\033[90m\xe2\x94\x90\033[0m";
 
         // Content area.
-        int content_rows = std::max(1, H - 3);
+        const int content_rows = std::max(1, H - 3); // top border + bottom border + status hint row
 
         const Page& p = pages_[active_tab_];
         const int scroll = p.scroll_offset();
@@ -1045,7 +1120,7 @@ private:
 
         std::vector<Text> list_lines;
         if (p.has_list()) {
-            list_lines = p.list().render(W - 4);
+            list_lines = p.list().render(CONTENT_WIDTH - 1); // subtract 1 for list cursor "> "
         }
         const int total = n_static + static_cast<int>(list_lines.size());
 
@@ -1060,7 +1135,7 @@ private:
                     ? static_lines[static_cast<size_t>(line_idx)]
                     : list_lines[static_cast<size_t>(line_idx - n_static)];
                 const size_t plain_len = line.length();
-                const int content_width = W - 3;
+                const int content_width = CONTENT_WIDTH;
                 buf += ' ';
                 buf += line.render(content_width); // truncates overflowing lines
                 if (static_cast<int>(plain_len) < content_width) {
@@ -1068,7 +1143,7 @@ private:
                     buf += std::string(static_cast<size_t>(pad), ' ');
                 }
             } else {
-                buf += std::string(static_cast<size_t>(W - 2), ' ');
+                buf += std::string(static_cast<size_t>(BLANK_FILL), ' ');
             }
 
             buf += "\033[90m\xe2\x94\x82\033[0m"; // right border
@@ -1098,8 +1173,8 @@ private:
         const int status_plain_len  = static_cast<int>(utf8_display_width(status_hint));
         const int scroll_plain_len  = static_cast<int>(scroll_hint.size());
         const int total_fixed       = status_plain_len + scroll_plain_len;
-        int left_dash  = std::max(0, (W - 2 - total_fixed) / 2);
-        int right_dash = std::max(0, W - 2 - total_fixed - left_dash);
+        int left_dash  = std::max(0, (BLANK_FILL - total_fixed) / 2);
+        int right_dash = std::max(0, BLANK_FILL - total_fixed - left_dash);
 
         buf += "\033[90m\xe2\x94\x94";
         for (int i = 0; i < left_dash; ++i)  buf += "\xe2\x94\x80";
