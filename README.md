@@ -140,6 +140,41 @@ page.set_list(list);
 
 Space toggles the checkbox on the highlighted row; Enter confirms. Call `list.get_selected_items()` to retrieve all checked items.
 
+### Background thread updates via `post()`
+
+`Page` mutators (`add_line`, `clear`, `update_line`, `set_list`, etc.) are protected by a per-page mutex and safe to call from any thread. Structural `App` changes must be queued with `post()`:
+
+```cpp
+termui::App app;
+auto& status = app.add_page("Status");
+status.add_line("Starting…");
+
+std::thread worker([&]() {
+    for (int i = 1; i <= 10; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        // Page mutators are safe from any thread:
+        status.clear();
+        status.add_line("Step " + std::to_string(i) + " / 10");
+    }
+
+    // Structural App changes go through post():
+    app.post([&]() { app.set_active_tab(1); });
+});
+
+app.run();
+worker.join();
+```
+
+**Threading contract:**
+
+| What | From which thread |
+|---|---|
+| `page.add_line()`, `page.clear()`, `page.update_line()`, `page.set_list()`, `page.scroll_up/down()` | Any thread |
+| `app.post(fn)` | Any thread |
+| `app.add_page()`, `page.set_title()`, `page.tab_style()` | Before `run()` only, or via `post()` |
+| `app.run()`, `on_tick_` callback, item action callbacks | Event-loop thread only |
+
 ---
 
 ## API Reference
@@ -160,7 +195,10 @@ termui::App app("Title");  // optional title string (reserved for future use)
 | `Page& active_page()` | Returns a reference to the currently visible page. Shorthand for `page(active_tab())`. |
 | `size_t page_count() const` | Returns the total number of pages. |
 | `size_t active_tab() const` | Returns the index of the currently visible tab. |
+| `void set_active_tab(size_t index)` | Switches the visible tab. No-op if `index` is out of range. Call before `run()`, or queue via `post()` from another thread. |
 | `App& set_on_tick(std::function<void()> cb)` | Registers a callback invoked ~every 100 ms when no key is pressed. Use it to update page content for live/animated displays; `render()` is called automatically after each tick. Returns `*this` for chaining (e.g. `app.set_on_tick(...).run()`). |
+| `App& refresh()` | Marks the display dirty so it re-renders on the next poll cycle (~100 ms) without waiting for a keypress. Safe to call from the event-loop thread. |
+| `void post(std::function<void()> fn)` | Queues `fn` to be called on the event-loop thread on the next poll cycle. Safe to call from **any thread**. Use this for structural changes (`add_page`, `set_active_tab`) that must not race with rendering. |
 | `void run()` | Enters raw terminal mode and blocks until the user quits (`q` or Ctrl+C). Cleans up the terminal on exit. |
 
 ---
