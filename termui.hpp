@@ -1097,11 +1097,11 @@ private:
         }
 
         Page& p = pages_[active_tab_];
-        bool consumed = false;
-        {
-            std::lock_guard<std::mutex> lk(p.mtx_);
-            consumed = p.has_list_ && p.list_.handle_key(key);
-        }
+        // Do NOT hold p.mtx_ here: handle_key(KEY_ENTER) invokes user callbacks
+        // (e.g. rebuild lambdas) that call back into Page methods (clear, add_line)
+        // which also acquire p.mtx_, causing a recursive deadlock.  handle_key is
+        // only ever called from the single-threaded event loop, so no lock needed.
+        bool consumed = p.has_list_ && p.list_.handle_key(key);
         if (consumed) { render(); return; }
 
         switch (key) {
