@@ -17,6 +17,9 @@
 #include <csignal>
 #include <cassert>
 #include <cerrno>
+#include <atomic>
+#include <mutex>
+#include <queue>
 
 #ifdef _WIN32
 #  ifndef NOMINMAX
@@ -498,8 +501,8 @@ inline struct termios& orig_termios_ref() {
     static struct termios t;
     return t;
 }
-inline bool& raw_mode_active_ref() {
-    static bool active = false;
+inline volatile sig_atomic_t& raw_mode_active_ref() {
+    static volatile sig_atomic_t active = 0;
     return active;
 }
 inline volatile sig_atomic_t& g_resize_flag_ref() {
@@ -510,7 +513,7 @@ inline volatile sig_atomic_t& g_resize_flag_ref() {
 inline void exit_raw_mode() {
     if (raw_mode_active_ref()) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios_ref());
-        raw_mode_active_ref() = false;
+        raw_mode_active_ref() = 0;
     }
 }
 
@@ -525,7 +528,7 @@ inline void enter_raw_mode() {
     raw.c_cc[VMIN]  = 0;
     raw.c_cc[VTIME] = 1; // 100 ms read timeout
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    raw_mode_active_ref() = true;
+    raw_mode_active_ref() = 1;
 }
 
 inline TermSize get_terminal_size() {
@@ -799,10 +802,39 @@ class Page {
 public:
     explicit Page(const std::string& title)
         : title_(title), scroll_(0), has_list_(false), list_() {}
-    Page(const Page&) = default;
-    Page& operator=(const Page&) = default;
-    Page(Page&&) noexcept = default;
-    Page& operator=(Page&&) noexcept = default;
+
+    // std::mutex is neither copyable nor movable, so we provide custom
+    // copy/move operations that transfer data but default-construct a fresh mutex.
+    Page(const Page& o)
+        : title_(o.title_), tab_style_(o.tab_style_), lines_(o.lines_),
+          scroll_(o.scroll_), has_list_(o.has_list_), list_(o.list_) {}
+    Page& operator=(const Page& o) {
+        if (this != &o) {
+            std::lock_guard<std::mutex> lk(o.mtx_);
+            title_     = o.title_;
+            tab_style_ = o.tab_style_;
+            lines_     = o.lines_;
+            scroll_    = o.scroll_;
+            has_list_  = o.has_list_;
+            list_      = o.list_;
+        }
+        return *this;
+    }
+    Page(Page&& o) noexcept
+        : title_(std::move(o.title_)), tab_style_(std::move(o.tab_style_)),
+          lines_(std::move(o.lines_)), scroll_(o.scroll_),
+          has_list_(o.has_list_), list_(std::move(o.list_)) {}
+    Page& operator=(Page&& o) noexcept {
+        if (this != &o) {
+            title_     = std::move(o.title_);
+            tab_style_ = std::move(o.tab_style_);
+            lines_     = std::move(o.lines_);
+            scroll_    = o.scroll_;
+            has_list_  = o.has_list_;
+            list_      = std::move(o.list_);
+        }
+        return *this;
+    }
 
     const std::string& title() const { return title_; }
 
@@ -812,21 +844,25 @@ public:
     const Style& tab_style() const { return tab_style_; }
 
     Page& add_line(const Text& line) {
+        std::lock_guard<std::mutex> lk(mtx_);
         lines_.push_back(line);
         return *this;
     }
 
     Page& add_line(const std::string& text) {
+        std::lock_guard<std::mutex> lk(mtx_);
         lines_.push_back(Text(text));
         return *this;
     }
 
     Page& add_lines(const std::vector<Text>& lines) {
+        std::lock_guard<std::mutex> lk(mtx_);
         for (const Text& line : lines) lines_.push_back(line);
         return *this;
     }
 
     Page& add_blank() {
+        std::lock_guard<std::mutex> lk(mtx_);
         lines_.push_back(Text(""));
         return *this;
     }
@@ -834,16 +870,21 @@ public:
     // Update a single line in-place without clearing the page.
     // Silently ignored if index is out of range.
     Page& update_line(size_t index, const Text& text) {
+        std::lock_guard<std::mutex> lk(mtx_);
         if (index < lines_.size()) lines_[index] = text;
         return *this;
     }
 
     // Removes all static lines and resets the scroll position to 0.
-    Page& clear() { lines_.clear(); scroll_ = 0; return *this; }
+    Page& clear() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        lines_.clear(); scroll_ = 0; return *this;
+    }
 
     // Copies list into this Page. The caller's SelectableList may be destroyed
     // freely after this call — Page owns its own copy.
     Page& set_list(const SelectableList& list) {
+        std::lock_guard<std::mutex> lk(mtx_);
         list_ = list;
         has_list_ = true;
         return *this;
@@ -851,6 +892,7 @@ public:
 
     // Move overload — avoids a copy when passing a temporary or local.
     Page& set_list(SelectableList&& list) {
+        std::lock_guard<std::mutex> lk(mtx_);
         list_ = std::move(list);
         has_list_ = true;
         return *this;
@@ -861,12 +903,14 @@ public:
     const SelectableList& list() const { return list_; }
 
     void scroll_up(int n = 1) {
+        std::lock_guard<std::mutex> lk(mtx_);
         scroll_ = std::max(0, scroll_ - n);
     }
 
     void scroll_down(int n = 1, int visible_rows = 0) {
-        int effective_rows = visible_rows > 0 ? visible_rows : total_lines();
-        int max_scroll = std::max(0, total_lines() - effective_rows);
+        std::lock_guard<std::mutex> lk(mtx_);
+        int effective_rows = visible_rows > 0 ? visible_rows : total_lines_locked();
+        int max_scroll = std::max(0, total_lines_locked() - effective_rows);
         scroll_ = std::min(scroll_ + n, max_scroll);
     }
 
@@ -882,12 +926,23 @@ public:
     }
 
 private:
+    friend class App;
+    mutable std::mutex mtx_;
+
     std::string title_;
     Style tab_style_;
     std::vector<Text> lines_;
     int scroll_;
     bool has_list_;
     SelectableList list_;
+
+    // total_lines() variant for use when mtx_ is already held.
+    int total_lines_locked() const {
+        int count = static_cast<int>(lines_.size());
+        if (has_list_)
+            count += static_cast<int>(list_.size());
+        return count;
+    }
 };
 
 // ─── App ────────────────────────────────────────────────────────────────────
@@ -895,13 +950,26 @@ private:
 class App {
 public:
     explicit App(const std::string& title = "")
-        : title_(title), active_tab_(0), tab_offset_(0), running_(false), on_tick_() {}
+        : title_(title), active_tab_(0), tab_offset_(0), running_(false), dirty_(false), on_tick_() {}
 
     // Register a callback invoked roughly every 100 ms when no key is pressed.
     // Inside the callback the application has already re-entered the render
     // cycle, so mutating page content and returning is sufficient — render()
     // is called automatically after on_tick_() returns.
     App& set_on_tick(std::function<void()> cb) { on_tick_ = std::move(cb); return *this; }
+
+    // Mark the display as dirty so it is re-rendered on the next poll cycle
+    // (within ~100 ms) without waiting for a keypress.
+    App& refresh() { dirty_ = true; return *this; }
+
+    // Queue a function to be called on the event-loop thread on the next poll
+    // cycle.  Safe to call from any thread.  Use this for structural App changes
+    // (add_page, set_active_tab) or any operation that must run on the main
+    // thread while run() is active.
+    void post(std::function<void()> fn) {
+        { std::lock_guard<std::mutex> lk{post_mtx_}; post_queue_.push(std::move(fn)); }
+        dirty_ = true;
+    }
 
     Page& add_page(const std::string& name) {
         pages_.push_back(Page(name));
@@ -929,9 +997,11 @@ public:
 
         render();
         while (running_) {
+            drain_post_queue();
             detail::Key key = detail::read_key();
             if (key == detail::KEY_NONE) {
                 if (on_tick_) { on_tick_(); render(); }
+                else if (dirty_) { dirty_ = false; render(); }
             } else {
                 handle_key(key);
             }
@@ -952,7 +1022,16 @@ private:
     size_t active_tab_;
     size_t tab_offset_;
     bool running_;
+    std::atomic<bool> dirty_;
     std::function<void()> on_tick_;
+    std::mutex post_mtx_;
+    std::queue<std::function<void()>> post_queue_;
+
+    void drain_post_queue() {
+        std::queue<std::function<void()>> local;
+        { std::lock_guard<std::mutex> lk(post_mtx_); std::swap(local, post_queue_); }
+        while (!local.empty()) { local.front()(); local.pop(); }
+    }
 
     void install_signals() {
 #ifndef _WIN32
@@ -996,9 +1075,12 @@ private:
         }
 
         Page& p = pages_[active_tab_];
-        if (p.has_list() && p.list().handle_key(key)) {
-            render();
-            return;
+        {
+            std::lock_guard<std::mutex> lk(p.mtx_);
+            if (p.has_list_ && p.list_.handle_key(key)) {
+                render();
+                return;
+            }
         }
 
         switch (key) {
@@ -1122,17 +1204,25 @@ private:
         // Content area.
         const int content_rows = std::max(1, H - 3); // top border + bottom border + status hint row
 
-        const Page& p = pages_[active_tab_];
-        const int scroll = p.scroll_offset();
+        Page& p = pages_[active_tab_];
 
-        // Combine static page lines with selectable list lines (if present).
-        const std::vector<Text>& static_lines = p.lines();
-        const int n_static = static_cast<int>(static_lines.size());
-
+        // Snapshot page data under lock so background threads can safely mutate.
+        std::vector<Text> static_lines;
         std::vector<Text> list_lines;
-        if (p.has_list()) {
-            list_lines = p.list().render(CONTENT_WIDTH - 1); // subtract 1 for list cursor "> "
+        int scroll;
+        bool has_list;
+        bool multi_select;
+        {
+            std::lock_guard<std::mutex> lk(p.mtx_);
+            static_lines = p.lines_;
+            scroll       = p.scroll_;
+            has_list     = p.has_list_;
+            multi_select = has_list && p.list_.is_multi_select();
+            if (has_list)
+                list_lines = p.list_.render(CONTENT_WIDTH - 1);
         }
+
+        const int n_static = static_cast<int>(static_lines.size());
         const int total = n_static + static_cast<int>(list_lines.size());
 
         for (int row = 0; row < content_rows; ++row) {
@@ -1166,10 +1256,10 @@ private:
         buf += ";1H";
 
         const char* status_hint;
-        if (p.has_list() && p.list().is_multi_select())
+        if (has_list && multi_select)
             status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs"
                           "  [\xe2\x86\x91\xe2\x86\x93] select  [Space] toggle  [Enter] confirm ";
-        else if (p.has_list())
+        else if (has_list)
             status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] select  [Enter] choose ";
         else
             status_hint = " [q] quit  [\xe2\x86\x90\xe2\x86\x92] tabs  [\xe2\x86\x91\xe2\x86\x93] scroll ";
