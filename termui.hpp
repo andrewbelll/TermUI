@@ -48,7 +48,7 @@ enum class Color {
     BrightBlue = 94, BrightMagenta = 95, BrightCyan = 96, BrightWhite = 97,
     // Sentinel: total number of named colors (not an ANSI code).
     // Update this value if new colors are added.
-    COLOR_COUNT = 18
+    COLOR_COUNT = 17
 };
 
 struct Style {
@@ -336,7 +336,7 @@ private:
         int len = static_cast<int>(utf8_display_width(s));
         if (len <= width)
             return s + std::string(static_cast<size_t>(width - len), ' ');
-        if (width <= 1) return "\xe2\x80\xa6"; // …
+        if (width == 1) return "\xe2\x80\xa6"; // …
         return utf8_truncate(s, static_cast<size_t>(width - 1)) + "\xe2\x80\xa6";
     }
 };
@@ -443,7 +443,7 @@ inline void enter_raw_mode() {
     GetConsoleMode(hStdin_ref(),  &orig_in_mode_ref());
     DWORD out_mode = orig_out_mode_ref() | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     SetConsoleMode(hStdout_ref(), out_mode);
-    DWORD in_mode = ENABLE_WINDOW_INPUT;
+    DWORD in_mode = ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS;
     SetConsoleMode(hStdin_ref(), in_mode);
     orig_cp_ref() = GetConsoleOutputCP();
     SetConsoleOutputCP(65001);
@@ -458,7 +458,8 @@ inline void exit_raw_mode() {
 
 inline TermSize get_terminal_size() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(hStdout_ref(), &csbi);
+    if (!GetConsoleScreenBufferInfo(hStdout_ref(), &csbi))
+        return {80, 24};
     TermSize ts;
     ts.cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     ts.rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
@@ -527,7 +528,7 @@ inline void enter_raw_mode() {
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_cc[VMIN]  = 0;
     raw.c_cc[VTIME] = 1; // 100 ms read timeout
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) return;
     raw_mode_active_ref() = 1;
 }
 
@@ -588,7 +589,7 @@ inline Key read_key() {
             if (seq[1] >= '0' && seq[1] <= '9') {
                 int limit = 32;
                 unsigned char drain;
-                while (limit-- > 0 && PollRead::read_byte(drain, 50)) {
+                while (limit-- > 0 && PollRead::read_byte(drain, 5)) {
                     if ((drain >= 'A' && drain <= 'Z') ||
                         (drain >= 'a' && drain <= 'z')) break;
                 }
@@ -604,8 +605,15 @@ inline Key read_key() {
 
 inline void write_raw(const std::string& s) {
 #ifdef _WIN32
-    DWORD written;
-    WriteConsoleA(hStdout_ref(), s.c_str(), static_cast<DWORD>(s.size()), &written, NULL);
+    const char* ptr = s.c_str();
+    DWORD remaining = static_cast<DWORD>(s.size());
+    while (remaining > 0) {
+        DWORD written = 0;
+        if (!WriteConsoleA(hStdout_ref(), ptr, remaining, &written, NULL) || written == 0)
+            break;
+        ptr += written;
+        remaining -= written;
+    }
 #else
     // Loop to handle partial writes (signal interrupts, pipe back-pressure, …).
     const char* ptr = s.c_str();
@@ -665,6 +673,9 @@ public:
     }
 
     // deprecated: use set_on_select()
+#if __cplusplus >= 201402L
+    [[deprecated("use set_on_select()")]]
+#endif
     SelectableList& on_select(std::function<void(int, const std::string&)> cb) {
         return set_on_select(std::move(cb));
     }
@@ -805,12 +816,20 @@ public:
 
     // std::mutex is neither copyable nor movable, so we provide custom
     // copy/move operations that transfer data but default-construct a fresh mutex.
-    Page(const Page& o)
-        : title_(o.title_), tab_style_(o.tab_style_), lines_(o.lines_),
-          scroll_(o.scroll_), has_list_(o.has_list_), list_(o.list_) {}
+    Page(const Page& o) {
+        std::lock_guard<std::mutex> lk(o.mtx_);
+        title_    = o.title_;
+        tab_style_ = o.tab_style_;
+        lines_    = o.lines_;
+        scroll_   = o.scroll_;
+        has_list_ = o.has_list_;
+        list_     = o.list_;
+    }
     Page& operator=(const Page& o) {
         if (this != &o) {
-            std::lock_guard<std::mutex> lk(o.mtx_);
+            std::lock(mtx_, o.mtx_);
+            std::lock_guard<std::mutex> lk1(mtx_, std::adopt_lock);
+            std::lock_guard<std::mutex> lk2(o.mtx_, std::adopt_lock);
             title_     = o.title_;
             tab_style_ = o.tab_style_;
             lines_     = o.lines_;
@@ -824,8 +843,11 @@ public:
         : title_(std::move(o.title_)), tab_style_(std::move(o.tab_style_)),
           lines_(std::move(o.lines_)), scroll_(o.scroll_),
           has_list_(o.has_list_), list_(std::move(o.list_)) {}
-    Page& operator=(Page&& o) noexcept {
+    Page& operator=(Page&& o) {
         if (this != &o) {
+            std::lock(mtx_, o.mtx_);
+            std::lock_guard<std::mutex> lk1(mtx_, std::adopt_lock);
+            std::lock_guard<std::mutex> lk2(o.mtx_, std::adopt_lock);
             title_     = std::move(o.title_);
             tab_style_ = std::move(o.tab_style_);
             lines_     = std::move(o.lines_);
@@ -839,6 +861,7 @@ public:
     const std::string& title() const { return title_; }
 
     Page& set_title(const std::string& t, const Style& s = Style()) {
+        std::lock_guard<std::mutex> lk(mtx_);
         title_ = t; tab_style_ = s; return *this;
     }
     const Style& tab_style() const { return tab_style_; }
@@ -857,7 +880,7 @@ public:
 
     Page& add_lines(const std::vector<Text>& lines) {
         std::lock_guard<std::mutex> lk(mtx_);
-        for (const Text& line : lines) lines_.push_back(line);
+        lines_.insert(lines_.end(), lines.begin(), lines.end());
         return *this;
     }
 
@@ -919,10 +942,8 @@ public:
 
     // Total number of content lines (static + list items).
     int total_lines() const {
-        int count = static_cast<int>(lines_.size());
-        if (has_list_)
-            count += static_cast<int>(list_.size());
-        return count;
+        std::lock_guard<std::mutex> lk(mtx_);
+        return total_lines_locked();
     }
 
 private:
@@ -967,7 +988,8 @@ public:
     // (add_page, set_active_tab) or any operation that must run on the main
     // thread while run() is active.
     void post(std::function<void()> fn) {
-        { std::lock_guard<std::mutex> lk{post_mtx_}; post_queue_.push(std::move(fn)); }
+        std::lock_guard<std::mutex> lk{post_mtx_};
+        post_queue_.push(std::move(fn));
         dirty_ = true;
     }
 
@@ -980,7 +1002,7 @@ public:
         assert(index < pages_.size() && "App::page index out of range");
         return pages_[index];
     }
-    Page& active_page() { return pages_[active_tab_]; }
+    Page& active_page() { assert(!pages_.empty()); return pages_[active_tab_]; }
     size_t page_count() const { return pages_.size(); }
     size_t active_tab() const { return active_tab_; }
 
@@ -1000,7 +1022,7 @@ public:
             drain_post_queue();
             detail::Key key = detail::read_key();
             if (key == detail::KEY_NONE) {
-                if (on_tick_) { on_tick_(); render(); }
+                if (on_tick_) { on_tick_(); dirty_ = false; render(); }
                 else if (dirty_) { dirty_ = false; render(); }
             } else {
                 handle_key(key);
@@ -1075,13 +1097,12 @@ private:
         }
 
         Page& p = pages_[active_tab_];
+        bool consumed = false;
         {
             std::lock_guard<std::mutex> lk(p.mtx_);
-            if (p.has_list_ && p.list_.handle_key(key)) {
-                render();
-                return;
-            }
+            consumed = p.has_list_ && p.list_.handle_key(key);
         }
+        if (consumed) { render(); return; }
 
         switch (key) {
         case detail::KEY_LEFT:
@@ -1418,7 +1439,7 @@ private:
             }
         }
 
-        page_->set_list(lst);
+        page_->set_list(std::move(lst));
     }
 };
 
