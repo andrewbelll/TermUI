@@ -806,6 +806,11 @@ public:
 
     const std::string& title() const { return title_; }
 
+    Page& set_title(const std::string& t, const Style& s = Style()) {
+        title_ = t; tab_style_ = s; return *this;
+    }
+    const Style& tab_style() const { return tab_style_; }
+
     Page& add_line(const Text& line) {
         lines_.push_back(line);
         return *this;
@@ -878,6 +883,7 @@ public:
 
 private:
     std::string title_;
+    Style tab_style_;
     std::vector<Text> lines_;
     int scroll_;
     bool has_list_;
@@ -1087,9 +1093,9 @@ private:
         for (size_t i = tab_offset_; i <= last_visible; ++i) {
             const std::string& tab_title = pages_[i].title();
             if (i == active_tab_) {
-                tab_str += "\033[1;7m " + tab_title + " \033[0m";
+                tab_str += pages_[i].tab_style().bold().reversed().begin() + " " + tab_title + " " + Style::reset();
             } else {
-                tab_str += "\033[0m " + tab_title + " ";
+                tab_str += pages_[i].tab_style().begin() + " " + tab_title + " " + Style::reset();
             }
             tab_plain_len += utf8_display_width(tab_title) + 2;
             if (i < last_visible) {

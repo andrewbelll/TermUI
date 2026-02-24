@@ -4,7 +4,10 @@ int main() {
     termui::App app("TermUI Demo");
 
     // ── Tab 1: Dashboard ─────────────────────────────────────────
+    // set_title() gives each tab its own color in the tab bar.
+    // Active tab: bold + reversed with that color. Inactive: the color as-is.
     auto& dashboard = app.add_page("Dashboard");
+    dashboard.set_title("Dashboard", termui::Style().fg(termui::Color::Cyan));
     dashboard.add_line(termui::Text("Dashboard", termui::Style().bold().fg(termui::Color::Cyan)));
     dashboard.add_blank();
     dashboard.add_line(termui::Text("System Status", termui::Style().underline()));
@@ -18,6 +21,7 @@ int main() {
 
     // ── Tab 2: Actions — per-item lambdas ───────────────────────
     auto& actions_page = app.add_page("Actions");
+    actions_page.set_title("Actions", termui::Style().fg(termui::Color::Yellow));
 
     auto rebuild = [&](termui::Text result) {
         actions_page.clear();
@@ -49,6 +53,7 @@ int main() {
 
     // ── Tab 3: Data — table display ─────────────────────────────
     auto& data = app.add_page("Data");
+    data.set_title("Data", termui::Style().fg(termui::Color::Magenta));
     data.add_line(termui::Text("Sample Data Table", termui::Style().bold().fg(termui::Color::Magenta)));
     data.add_blank();
 
@@ -101,6 +106,7 @@ int main() {
 
     // ── Tab 6: Live — animated progress bar via on_tick ──────────
     auto& live = app.add_page("Live");
+    live.set_title("Live", termui::Style().fg(termui::Color::Green));
 
     // State for the animated bar: progress steps from 0.0 to 1.0 then loops.
     termui::ProgressBar bar;
@@ -147,6 +153,7 @@ int main() {
 
     // ── Tab 8: Logs ───────────────────────────────────────────────
     auto& logs = app.add_page("Logs");
+    logs.set_title("Logs", termui::Style().fg(termui::Color::Yellow));
     logs.add_line(termui::Text("Application Logs", termui::Style().bold().fg(termui::Color::Yellow)));
     logs.add_blank();
     logs.add_line(termui::Text("[INFO]  Service started successfully.", termui::Style(termui::Color::Green)));
@@ -163,6 +170,7 @@ int main() {
 
     // ── Tab 10: Network ───────────────────────────────────────────
     auto& network = app.add_page("Network");
+    network.set_title("Network", termui::Style().fg(termui::Color::Blue));
     network.add_line(termui::Text("Network Status", termui::Style().bold().fg(termui::Color::Blue)));
     network.add_blank();
     network.add_line(termui::Text("  Interface:  eth0"));
@@ -171,6 +179,7 @@ int main() {
 
     // ── Tab 11: Metrics ───────────────────────────────────────────
     auto& metrics = app.add_page("Metrics");
+    metrics.set_title("Metrics", termui::Style().fg(termui::Color::Magenta));
     metrics.add_line(termui::Text("Metrics", termui::Style().bold().fg(termui::Color::Magenta)));
     metrics.add_blank();
     metrics.add_line(termui::Text("  CPU:     42%"));
@@ -179,6 +188,7 @@ int main() {
 
     // ── Tab 12: Alerts ────────────────────────────────────────────
     auto& alerts = app.add_page("Alerts");
+    alerts.set_title("Alerts", termui::Style().bold().fg(termui::Color::Red));
     alerts.add_line(termui::Text("Active Alerts", termui::Style().bold().fg(termui::Color::Red)));
     alerts.add_blank();
     alerts.add_line(termui::Text("  [!] CPU spike at 14:32", termui::Style(termui::Color::Yellow)));
@@ -202,6 +212,7 @@ int main() {
 
     // ── Tab 15: Help ──────────────────────────────────────────────
     auto& help_page = app.add_page("Help");
+    help_page.set_title("Help", termui::Style().fg(termui::Color::BrightWhite));
     help_page.add_line(termui::Text("Help & Shortcuts", termui::Style().bold().fg(termui::Color::BrightWhite)));
     help_page.add_blank();
     help_page.add_line(termui::Text("  \xe2\x86\x90 \xe2\x86\x92     Switch tabs"));
