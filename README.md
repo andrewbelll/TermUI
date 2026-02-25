@@ -29,7 +29,7 @@ When tabs overflow the terminal width, dim `<` / `>` indicators appear at the ed
 - **Live updates** — `set_on_tick` callback fires every ~100 ms for animated or polling content
 - **Scrollable content** — any page scrolls when content exceeds the terminal height
 - **Box-drawing borders** — clean UI using Unicode box characters
-- **Flicker-free rendering** — single-write buffer flush per frame
+- **Flicker-free rendering** — single atomic buffer flush per frame; synchronized output (DEC mode 2026) eliminates tearing in supported terminals (VTE, kitty, foot, Alacritty, iTerm2, xterm; unsupported terminals ignore the sequences silently)
 - **Single-header, zero dependencies** — just copy `termui.hpp`
 
 ## Requirements
@@ -120,8 +120,11 @@ app.set_on_tick([&]() {
 
 ```cpp
 termui::Table table;
-table.add_column("Name", 12).add_column("Status", 8);
-table.add_row({"Alice", "Active"}).add_row({"Bob", "Away"});
+table.add_column("Name", 12)
+     .add_column("Role",   10, termui::Style().fg(termui::Color::Cyan))  // colored column
+     .add_column("Status",  8);
+table.add_row({"Alice", "Engineer", "Active"})
+     .add_row({"Bob",   "Designer", "Away"});
 page.add_blank().add_lines(table.render());
 ```
 
@@ -347,7 +350,7 @@ A column-based table with auto or fixed column widths and box-drawing separators
 ```cpp
 termui::Table table;
 table.add_column("Name", 12)   // fixed 12-column width
-     .add_column("Role")       // auto-sized to content
+     .add_column("Role",  0, termui::Style().fg(termui::Color::Cyan))  // auto-width, colored
      .add_column("Status", 8);
 
 table.add_row({"Alice", "Engineer", "Active"})
@@ -359,8 +362,11 @@ page.add_lines(table.render());
 
 | Method | Description |
 |---|---|
-| `Table& add_column(const std::string& name, int width = 0)` | Adds a column. `width = 0` means auto-size to the widest cell. Returns `*this`. |
+| `Table& add_column(const std::string& name, int width = 0, const Style& s = Style())` | Adds a column. `width = 0` means auto-size to the widest cell. `s` is applied to every data cell in the column (header uses `header_style`). Returns `*this`. |
 | `Table& add_row(const std::vector<std::string>& cells)` | Adds a data row. Returns `*this`. |
+| `Table& clear_rows()` | Removes all data rows; column definitions and header style are preserved. Returns `*this`. |
+| `Table& clear()` | Removes all columns and rows and resets the header style to the default (bold + underline). Returns `*this`. |
+| `Table& column_style(size_t col, const Style& s)` | Sets the data-cell style for column `col` after construction. Silently ignored if `col` is out of range. Returns `*this`. |
 | `Table& header_style(const Style& s)` | Sets the style for the header row (default: bold + underline). Returns `*this`. |
 | `std::vector<Text> render(int available_width = 0) const` | Renders the table as a vector of `Text` lines. When `available_width > 0`, columns are scaled proportionally to fit. |
 
@@ -369,7 +375,8 @@ page.add_lines(table.render());
 ```cpp
 struct Column {
     std::string name;   // header label
-    int width;          // 0 = auto-sized
+    int         width;  // 0 = auto-sized
+    Style       style;  // applied to every data cell; default = no styling
 };
 ```
 

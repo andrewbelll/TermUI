@@ -228,8 +228,10 @@ class Table {
 public:
     struct Column {
         std::string name;
-        int width; // 0 = auto-sized to content
-        Column(const std::string& n, int w) : name(n), width(w) {}
+        int         width; // 0 = auto-sized to content
+        Style       style; // applied to data cells; default = no styling
+        Column(const std::string& n, int w, const Style& s = Style())
+            : name(n), width(w), style(s) {}
     };
 
     Table() {
@@ -240,8 +242,13 @@ public:
     Table(Table&&) noexcept = default;
     Table& operator=(Table&&) noexcept = default;
 
-    Table& add_column(const std::string& name, int width = 0) {
-        columns_.push_back(Column(name, width));
+    Table& add_column(const std::string& name, int width = 0, const Style& s = Style()) {
+        columns_.push_back(Column(name, width, s));
+        return *this;
+    }
+
+    Table& column_style(size_t col, const Style& s) {
+        if (col < columns_.size()) columns_[col].style = s;
         return *this;
     }
 
@@ -249,6 +256,9 @@ public:
         rows_.push_back(cells);
         return *this;
     }
+
+    Table& clear_rows() { rows_.clear(); return *this; }
+    Table& clear()      { columns_.clear(); rows_.clear(); header_style_ = Style().bold().underline(); return *this; }
 
     Table& header_style(const Style& s) { header_style_ = s; return *this; }
 
@@ -312,7 +322,7 @@ public:
             for (size_t c = 0; c < columns_.size(); ++c) {
                 if (c > 0) row.add(" \xe2\x94\x82 ", Style(Color::BrightBlack));
                 const std::string& cell = (c < rows_[r].size()) ? rows_[r][c] : empty_str();
-                row.add(pad_or_truncate(cell, static_cast<int>(widths[c])));
+                row.add(pad_or_truncate(cell, static_cast<int>(widths[c])), columns_[c].style);
             }
             result.push_back(row);
         }
@@ -1151,6 +1161,7 @@ private:
         std::string buf;
         buf.reserve(static_cast<size_t>(W * H) * 8);
 
+        buf += "\033[?2026h";   // begin synchronized update (supported terminals batch the frame)
         buf += "\033[H\033[0m"; // home cursor, reset attributes
 
         // Ensure active_tab_ is not left of the visible window (right scroll is
@@ -1311,6 +1322,7 @@ private:
         }
         buf += "\xe2\x94\x98\033[0m";
         buf += "\033[J"; // clear from cursor to end of screen
+        buf += "\033[?2026l"; // end synchronized update
 
         detail::write_raw(buf);
     }

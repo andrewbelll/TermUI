@@ -60,7 +60,7 @@ int main() {
     termui::Table table;
     table.add_column("ID", 4)
          .add_column("Name", 14)
-         .add_column("Role", 12)
+         .add_column("Role", 12, termui::Style().fg(termui::Color::Cyan))
          .add_column("Status", 10);
 
     table.add_row({"1",  "Alice",   "Engineer",  "Active"});
